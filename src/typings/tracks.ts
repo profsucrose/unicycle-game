@@ -16,16 +16,21 @@ export class Loop extends Track {
 
     generateStartingPosition(): Pose {
         const r = Math.random() * (Loop.outerRadius - Loop.innerRadius) + Loop.innerRadius
-        const theta = Math.random() * 2 * Math.PI
+        // const theta = Math.random() * 2 * Math.PI
+        const theta = 0
         const x = Math.cos(theta) * r
         const z = Math.sin(theta) * r
-        const y = 1
+        const y = 1e-6
+
+        const yaw = Math.atan2(-Math.sin(theta), Math.cos(theta)) + Math.PI/2
+
+        console.log('yaw', yaw)
 
         return {
             x,
             y,
             z,
-            yaw: Math.random() * 2 * Math.PI,
+            yaw,
             roll: 0
         }
     }

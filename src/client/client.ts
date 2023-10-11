@@ -7,8 +7,14 @@ import { degToRad, inverseLerp, lerp, radToDeg } from 'three/src/math/MathUtils'
 import { io, Socket } from 'socket.io-client'
 import { ClientToServerEvents, Player, ServerToClientEvents } from '../typings/events'
 import { Loop, PlayerVelocities, Pose } from '../typings'
+import FinishLine from './finishLine.png'
 
-const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io('http://localhost:8081');
+const params = new URL(window.location.href).searchParams
+
+const host = params.get('host') ?? 'http://localhost'
+const serverPort = params.get('port') ?? 8082
+
+const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(`${host}:${serverPort}`);
 
 const FPS = 60
 const tickDelta = 1 / FPS
@@ -407,8 +413,27 @@ const loop = new Loop()
 const track = (() => {
     const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
     const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
-    return new THREE.Mesh(geometry, material)
+    
+    const mesh = new THREE.Mesh(geometry, material)
         .rotateX(Math.PI / 2);
+
+    const finishLineWidth = Loop.outerRadius - Loop.innerRadius
+    console.log('finish line', FinishLine)
+    const texture = new THREE.TextureLoader().load(FinishLine)
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set( 16, 2 );
+    texture.magFilter = THREE.NearestFilter
+    const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
+    const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
+
+    const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
+
+    finishLine.position.set(Loop.innerRadius + finishLineWidth/2 - 0.05, 0.0, -0.01)
+
+    mesh.add(finishLine)
+
+    return mesh
 })()
 
 scene.add(track);
