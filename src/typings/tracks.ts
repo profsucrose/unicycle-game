@@ -10,8 +10,13 @@ export class Loop extends Track {
     static readonly outerRadius = 15
 
     onMap(x: number, y: number, z: number): boolean {
-        const r = Math.hypot(x, y, z)
-        return r >= Loop.innerRadius && r <= Loop.outerRadius && y >= 1e-6
+        const r = Math.hypot(x, z)
+        return r >= Loop.innerRadius && r <= Loop.outerRadius && y <= 1e-6 && y >= -1
+    }
+
+    onFinishLine(x: number, y: number, z: number): boolean {
+        const theta = Math.atan2(z, x)
+        return Math.abs(theta) < 5 * Math.PI/180
     }
 
     generateStartingPosition(): Pose {
@@ -20,7 +25,8 @@ export class Loop extends Track {
         const theta = 0
         const x = Math.cos(theta) * r
         const z = Math.sin(theta) * r
-        const y = 1e-6
+        // const y = 1e-6
+        const y = 3
 
         const yaw = Math.atan2(-Math.sin(theta), Math.cos(theta)) + Math.PI/2
 

@@ -68,6 +68,13 @@ io.on('connection', socket => {
             }
         })
 
+        socket.on('message', async text => {
+            const sockets = await io.fetchSockets()
+
+            for (const s of sockets)
+                s.emit('message', text)
+        })
+
         socket.on('disconnect', async () => {
             console.log(`${uuid} disconnected`)
             delete players[uuid]

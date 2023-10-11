@@ -35,6 +35,38 @@ Object.assign(positionText.style, {
 positionText.innerText = 'Test'
 document.body.appendChild(positionText)
 
+const logs = document.createElement('pre')
+Object.assign(logs.style, {
+    position: 'absolute',
+    width: '400px',
+    right: '0px',
+    top: '10px',
+    color: 'white',
+    height: '200px',
+    overflow: 'hidden',
+    fontFamily: 'monospace',
+    userSelect: 'none'
+})
+document.body.appendChild(logs)
+
+const chatInput = document.createElement('input')
+Object.assign(chatInput.style, {
+    position: 'absolute',
+    width: '200px',
+    right: '195px',
+    top: `${logs.clientHeight + 50}px`,
+    overflow: 'hidden',
+    fontFamily: 'monospace',
+    userSelect: 'none'
+})
+document.body.appendChild(chatInput)
+
+
+function log(line: string) {
+    logs.innerText += '\n' + line
+    logs.scroll(0, logs.scrollHeight + 100)
+}
+
 let timeSeconds = 0
 
 const keysHeld = {
@@ -42,7 +74,7 @@ const keysHeld = {
     KeyA: false,
     KeyS: false,
     KeyD: false,
-    Shift: false,
+    ShiftLeft: false,
     Space: false,
 }
 
@@ -90,6 +122,15 @@ class Unicycle {
     nameBillboard: THREE.Mesh
 
     scene: THREE.Scene
+
+    justPassedFinishLine = true
+
+    roundTime = 0
+
+    // TODO: Clean up basic kinematics
+    yVelocity = 0
+
+    leanSpeedDeg = 200
 
     setPosition(position: THREE.Vector3) {
         this.worldMesh.position.set(position.x, position.y, position.z)
@@ -186,6 +227,13 @@ class Unicycle {
             const dx = Math.sin(theta) * size.y / 2
             this.localRiderMesh.translateZ(dx)
         }
+
+        if (keysHeld.ShiftLeft) {
+            console.log('Increasing speed')
+            this.maxOmegaRadiansPerSecond = 6
+        } else {
+            this.maxOmegaRadiansPerSecond = 3
+        }
     }    
 
     getVelocities(): PlayerVelocities {
@@ -267,9 +315,29 @@ class Unicycle {
 
         // TODO: Switch from naive Euler angles to rotation vector
 
+        this.worldMesh.position.y += this.yVelocity * tickDelta
+
         if (!loop.onMap(...xyz(this.worldMesh.position))) {
-            this.worldMesh.position.y -= gravity * tickDelta
+            this.yVelocity -= gravity * tickDelta
+        } else {
+            this.yVelocity = 0
+            this.worldMesh.position.y = 0
         }
+
+        const onFinishLine = loop.onFinishLine(...xyz(this.worldMesh.position))
+        
+        const formatTime = (t: number) => `${Math.floor(t / 60)}:${(t < 10 ? '0' : '') + Math.floor(t)}`
+        
+        if (onFinishLine && !this.justPassedFinishLine) {
+            const time = formatTime(this.roundTime)
+            const line = `${this.name} just finished a lap in ${time}!`
+            socket.emit('message', line)
+            this.roundTime = 0
+        } else {
+            this.roundTime += tickDelta
+        }
+
+        this.justPassedFinishLine = onFinishLine
 
         this.localMesh.setRotationFromEuler(new THREE.Euler(this.roll, this.yaw, this.pitch))
 
@@ -463,14 +531,22 @@ scene.add(directionalLight);
         playerUnicycles[p.uuid] = new Unicycle(scene, p.pose, p.name)
     }
 
+    socket.on('message', text => {
+        log(text)
+    })
+
+
     socket.on('playerJoin', p => {
         const unicycle = new Unicycle(scene, p.pose, p.name)
         unicycle.setPose(player.pose)
         playerUnicycles[p.uuid] = unicycle
+
+        log(`${p.name} joined!`)
     })
 
     socket.on('playerLeave', uuid => {
         const u = playerUnicycles[uuid]
+        log(`${u.name} left`)
         console.log('player left, destroying unicycle', u)
         u.destroy()
         delete playerUnicycles[uuid]
@@ -486,6 +562,14 @@ scene.add(directionalLight);
         const u = playerUnicycles[uuid]
         u.setPose(pose)
         u.dPitchMomentum = velocities.wheelPitch
+    })
+
+    chatInput.addEventListener('keydown', (event) => {
+        if (event.key == 'Enter') {
+            const text = `${unicycle.name}: ${chatInput.value}`
+            socket.emit('message', text)
+            chatInput.value = ''
+        }
     })
 
     window.addEventListener('resize', onWindowResize, false)
