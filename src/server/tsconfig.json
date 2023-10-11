@@ -2,7 +2,11 @@
     "compilerOptions": {
         "target": "ES2019",
         "module": "commonjs",
-        "outDir": "../../dist/server",
+        /* For some reason directory is included in output path?
+        I'd think "outDir" should be "../../dist/server", but then that
+        results in "../../dist/server/server/server.js" instead of "../../dist/server/server.js".
+        TODO: Figure out */
+        "outDir": "../../dist",
         "esModuleInterop": true,
         "skipLibCheck": true
     },

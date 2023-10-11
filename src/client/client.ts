@@ -4,9 +4,14 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils'
 import { degToRad, inverseLerp, lerp, radToDeg } from 'three/src/math/MathUtils'
+import { io, Socket } from 'socket.io-client'
+import { ClientToServerEvents, Player, ServerToClientEvents } from '../typings/events'
+import { Loop, PlayerVelocities, Pose } from '../typings'
+
+const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io('http://localhost:8081');
 
 const FPS = 60
-const tickDelta = 1/FPS
+const tickDelta = 1 / FPS
 const friction = 0.9
 
 // TODO: Move to prototype
@@ -71,15 +76,23 @@ class Unicycle {
     worldMeshRollMomentum = 0
 
     worldMeshRoll = 0
-    worldMeshYaw = 0
+    worldMeshYaw = Math.PI
 
     heading: THREE.Vector3
 
     name: string = "Player 1"
     nameBillboard: THREE.Mesh
 
+    scene: THREE.Scene
+
     setPosition(position: THREE.Vector3) {
         this.worldMesh.position.set(position.x, position.y, position.z)
+    }
+
+    setPose(pose: Pose) {
+        this.worldMesh.position.set(pose.x, pose.y, pose.z)
+        this.worldMeshRoll = pose.roll
+        this.worldMeshYaw = pose.yaw
     }
 
     getPosition(): THREE.Vector3 {
@@ -87,7 +100,7 @@ class Unicycle {
     }
 
     getHeading(): THREE.Vector3 {
-        return new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI/2), 0, Math.cos(this.worldMeshYaw + Math.PI/2))
+        return new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI / 2), 0, Math.cos(this.worldMeshYaw + Math.PI / 2))
     }
 
     generateWheelMesh() {
@@ -98,32 +111,32 @@ class Unicycle {
             const spokeRadius = 0.05
             const tubeRadius = 0.2
             const hubWidth = 0.15
-    
+
             const torus = new THREE.TorusGeometry(radius, tubeRadius, 8, nSpokes - 1)
-    
+
             const hub = new THREE.CylinderGeometry(hubRadius, hubRadius, hubWidth, 20, 10)
-                .rotateX(Math.PI/2)
-    
+                .rotateX(Math.PI / 2)
+
             const spokes = Array.from({ length: nSpokes }, (_, i) => {
-                const t = i/(nSpokes - 1)
-                const theta = Math.PI/2 + t * 2 * Math.PI
+                const t = i / (nSpokes - 1)
+                const theta = Math.PI / 2 + t * 2 * Math.PI
                 const length = radius - 2 * tubeRadius
                 return new THREE.CylinderGeometry(spokeRadius, spokeRadius, length, 5, 5)
-                    .translate(0, hubRadius + length/2, 0)
+                    .translate(0, hubRadius + length / 2, 0)
                     .rotateZ(theta)
             })
-    
+
             return BufferGeometryUtils.mergeGeometries([torus, hub, ...spokes])
-                .rotateZ((2 * Math.PI)/(nSpokes-1))
+                .rotateZ((2 * Math.PI) / (nSpokes - 1))
         })()
-        
+
         console.log(wheelGeometry.attributes.position.count)
-        
+
         const material = new THREE.MeshBasicMaterial({
             color: 0x00ff00,
             wireframe: true,
         })
-        
+
         const mesh = new THREE.Mesh(wheelGeometry, material)
 
         mesh.geometry.scale(0.5, 0.5, 0.5)
@@ -131,7 +144,7 @@ class Unicycle {
 
         const size = new THREE.Vector3
         mesh.geometry.boundingBox.getSize(size)
-        mesh.translateY(size.y/2)
+        mesh.translateY(size.y / 2)
 
         this.centerToBottomUnrotated = new THREE.Vector3(0, -0.5 - 0.06, 0)
 
@@ -146,14 +159,14 @@ class Unicycle {
             color: 0xff0000
         })
         const size = new THREE.Vector3()
-        wheelMesh.geometry.computeBoundingBox() 
+        wheelMesh.geometry.computeBoundingBox()
         wheelMesh.geometry.boundingBox.getSize(size)
         const mesh = new THREE.Mesh(geometry, material)
-            .translateY(size.y + riderHeight/2 + this.localRiderOffsetY)
+            .translateY(size.y + riderHeight / 2 + this.localRiderOffsetY)
         return mesh
     }
 
-    update() {
+    handleInput() {
         if (keysHeld.KeyW) this.dPitchMomentum -= this.maxOmegaRadiansPerSecond * tickDelta
         if (keysHeld.KeyS) this.dPitchMomentum += this.maxOmegaRadiansPerSecond * tickDelta
 
@@ -164,9 +177,28 @@ class Unicycle {
             this.localRiderMesh.geometry.computeBoundingBox()
             const size = new THREE.Vector3
             this.localRiderMesh.geometry.boundingBox.getSize(size)
-            const dx = Math.sin(theta) * size.y/2
+            const dx = Math.sin(theta) * size.y / 2
             this.localRiderMesh.translateZ(dx)
         }
+    }    
+
+    getVelocities(): PlayerVelocities {
+        return {
+            wheelPitch: this.dPitchMomentum
+        }
+    }    
+
+    getPose(): Pose {
+        return {
+            x: this.worldMesh.position.x,
+            y: this.worldMesh.position.y,
+            z: this.worldMesh.position.z,
+            yaw: this.worldMeshYaw,
+            roll: this.worldMeshRoll
+        }
+    }
+
+    update() {
 
         // TODO: Optimize heap allocations
 
@@ -185,32 +217,32 @@ class Unicycle {
         this.localRiderMesh.geometry.boundingBox.getSize(riderSize)
         this.localMesh.geometry.computeBoundingBox()
         this.localMesh.geometry.boundingBox.getSize(wheelMeshSize)
-        const rX = (Math.sin(this.worldMeshRoll) * wheelMeshSize.y 
-            + Math.sin(this.localRiderMesh.rotation.x) * (riderSize.y/2 + this.localRiderOffsetY))
+        const rX = (Math.sin(this.worldMeshRoll) * wheelMeshSize.y
+            + Math.sin(this.localRiderMesh.rotation.x) * (riderSize.y / 2 + this.localRiderOffsetY))
         let torque = rX * gravity * wheelMass
 
 
-        this.worldMeshRollMomentum += torque/wheelInertia * tickDelta
+        this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
 
-        if (Math.abs(this.worldMeshRoll) < Math.PI/2) {
+        if (Math.abs(this.worldMeshRoll) < Math.PI / 2) {
             this.worldMeshRoll += this.worldMeshRollMomentum * tickDelta
         }
 
 
-        this.worldMesh.rotation.x = clamp(this.worldMesh.rotation.x, -Math.PI/2, Math.PI/2)
-        
-        const r = wheelMeshSize.x/2
+        this.worldMesh.rotation.x = clamp(this.worldMesh.rotation.x, -Math.PI / 2, Math.PI / 2)
+
+        const r = wheelMeshSize.x / 2
         const dx = this.dPitchMomentum * tickDelta * r
 
         this.dPitchMomentum += -dx * friction
-        
+
         // const k = 1/inverseLerp(0, Math.PI/2, this.roll)
 
-        const denom = lerp(0, 1, inverseLerp(0, Math.PI/2, Math.abs(this.worldMeshRoll)))
-        let k = Math.abs(denom) < 1e-6 ? Infinity : 1/denom
+        const denom = lerp(0, 1, inverseLerp(0, Math.PI / 2, Math.abs(this.worldMeshRoll)))
+        let k = Math.abs(denom) < 1e-6 ? Infinity : 1 / denom
         // k = 10
 
-        this.heading = new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI/2), 0, Math.cos(this.worldMeshYaw + Math.PI/2))
+        this.heading = new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI / 2), 0, Math.cos(this.worldMeshYaw + Math.PI / 2))
         this.arrowHelper.position.set(this.worldMesh.position.x, 0, this.worldMesh.position.z)
         this.arrowHelper.setDirection(this.heading)
 
@@ -218,7 +250,7 @@ class Unicycle {
 
         this.worldMesh.position.add(this.heading.multiplyScalar(speed * tickDelta))
 
-        this.worldMeshYaw -= Math.sign(this.worldMeshRoll) * speed/k * tickDelta
+        this.worldMeshYaw -= Math.sign(this.worldMeshRoll) * speed / k * tickDelta
 
 
         // this.worldMeshRoll = Math.sin(timeSeconds)
@@ -229,7 +261,7 @@ class Unicycle {
 
         // TODO: Switch from naive Euler angles to rotation vector
 
-        if (!onTrack(this.worldMesh.position.x, this.worldMesh.position.z)) {
+        if (!loop.onMap(...xyz(this.worldMesh.position))) {
             this.worldMesh.position.y -= gravity * tickDelta
         }
 
@@ -252,7 +284,7 @@ class Unicycle {
 
     }
 
-    constructor(scene: THREE.Scene, name: string = "Player 1") {
+    constructor(scene: THREE.Scene, startingPose: Pose, name: string) {
         this.name = name
         this.localMesh = this.generateWheelMesh()
 
@@ -272,7 +304,7 @@ class Unicycle {
 
         this.normalArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
         scene.add(this.normalArrow);
-        
+
         this.normalArrow.setColor(THREE.Color.NAMES.blue)
 
         // const geometry = new THREE.RingGeometry(0, 1)
@@ -291,40 +323,58 @@ class Unicycle {
             const ctx = canvas.getContext('2d')
             ctx.fillStyle = '#00f'
             ctx.fillRect(0, 0, canvas.width, canvas.height)
-            const fontSize = Math.floor(canvas.width/(this.name.length * 1.2)) * 2
+            const fontSize = Math.floor(canvas.width / (this.name.length * 1.2)) * 2
             ctx.font = `bold ${fontSize}px monospace`
             ctx.fillStyle = '#f00'
-            ctx.fillText(this.name, fontSize * 0.05, canvas.height/2 + fontSize/4)
+            ctx.fillText(this.name, fontSize * 0.05, canvas.height / 2 + fontSize / 4)
             const texture = new THREE.CanvasTexture(canvas)
             const material = new THREE.MeshBasicMaterial({ map: texture });
-            const nameBillboard = new THREE.Mesh( geometry, material )
+            const nameBillboard = new THREE.Mesh(geometry, material)
 
             scene.add(nameBillboard)
             this.nameBillboard = nameBillboard
             // this.nameBillboard.position.set(20, 5, 0)
         }
-        
+
 
         scene.add(this.worldMesh)
+
+        this.setPose(startingPose)
+    
+        this.scene = scene
+    }
+
+    destroy() {
+        // Should also dispose materials? But not sure how
+
+        this.scene.remove(this.arrowHelper)
+
+        this.scene.remove(this.nameBillboard)
+
+        this.localRiderMesh.geometry.dispose()
+        this.localMesh.geometry.dispose()
+        this.worldMesh.geometry.dispose()
+
+        this.scene.remove(this.worldMesh)
     }
 }
 
 class UnicycleCameraController {
-    camera: THREE.Camera    
+    camera: THREE.Camera
     unicycle: Unicycle
 
     constructor(camera: THREE.Camera, unicycle: Unicycle) {
         this.camera = camera
         this.unicycle = unicycle
     }
-    
+
     update() {
         const heading = this.unicycle.getHeading()
         const position = this.unicycle.getPosition()
         const camPosition = position.clone().sub(heading.multiplyScalar(10))
         camPosition.y += 10
         camera.position.set(...xyz(camPosition))
-        console.log(camPosition)
+        // console.log(camPosition)
         camera.up = new THREE.Vector3(0, 1, 0)
         camera.lookAt(position)
         camera.updateProjectionMatrix()
@@ -347,72 +397,108 @@ const controls = new OrbitControls(camera, renderer.domElement)
 
 const plane = (() => {
     const geometry = new THREE.PlaneGeometry(100, 100)
-    const material = new THREE.MeshBasicMaterial( {color: 0x888888, side: THREE.DoubleSide} );
-    return new THREE.Mesh( geometry, material )
-        .rotateX(Math.PI/2);
+    const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    return new THREE.Mesh(geometry, material)
+        .rotateX(Math.PI / 2);
 })()
 
-const innerTrackRadius = 20
-const outerTrackRadius = 50
+const loop = new Loop()
 
 const track = (() => {
-    const geometry = new THREE.RingGeometry( innerTrackRadius, outerTrackRadius, 32 ); 
-    const material = new THREE.MeshBasicMaterial( {color: 0x888888, side: THREE.DoubleSide} );
-    return new THREE.Mesh( geometry, material )
-        .rotateX(Math.PI/2);
+    const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
+    const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    return new THREE.Mesh(geometry, material)
+        .rotateX(Math.PI / 2);
 })()
-
-const onTrack = (x: number, z: number) => {
-    // TODO: Switch to THREE.js colliders
-    const r = Math.hypot(x, z)
-    return r > innerTrackRadius && r < outerTrackRadius
-}
 
 scene.add(track);
 
-const axesHelper = new THREE.AxesHelper( 5 );
-scene.add( axesHelper );
+const axesHelper = new THREE.AxesHelper(5);
+scene.add(axesHelper);
 
-const directionalLight = new THREE.DirectionalLight( 0xffffff, 0.5 );
-scene.add( directionalLight );
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+scene.add(directionalLight);
 
-const unicycle = new Unicycle(scene)
-unicycle.setPosition(new THREE.Vector3((innerTrackRadius + outerTrackRadius)/2, 0, 0))
+; (async () => {
+    const [player, players] = (await new Promise<[Player, Player[]]>((resolve) => {
+        socket.emit('join', (player: Player, players: Player[]) => resolve([player, players]))
+    }))
 
-const cameraController = new UnicycleCameraController(camera, unicycle)
+    console.log('Joined server! My uuid', player.uuid)
+    console.log('Other players currently on server:', players)
 
-const unicycle2 = new Unicycle(scene, "Dummy Unicycle")
-unicycle2.setPosition(new THREE.Vector3((innerTrackRadius + outerTrackRadius)/2, 0, 0))
+    const unicycle = new Unicycle(scene, player.pose, player.name)
+    unicycle.setPose(player.pose)
 
-window.addEventListener('resize', onWindowResize, false)
+    const cameraController = new UnicycleCameraController(camera, unicycle)
 
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight
-    camera.updateProjectionMatrix()
-    renderer.setSize(window.innerWidth, window.innerHeight)
-    render()
-}
+    const playerUnicycles: {[uuid: string]: Unicycle} = {}
 
-function loop() {
-    setTimeout(() => requestAnimationFrame(loop), 1000/FPS)
+    for (const p of players) {
+        playerUnicycles[p.uuid] = new Unicycle(scene, p.pose, p.name)
+    }
 
-    // mesh.rotation.x += 0.01
-    // mesh.rotation.y += 0.01
+    socket.on('playerJoin', p => {
+        const unicycle = new Unicycle(scene, p.pose, p.name)
+        unicycle.setPose(player.pose)
+        playerUnicycles[p.uuid] = unicycle
+    })
 
-    unicycle.update()
-    unicycle2.updateBillboard()
+    socket.on('playerLeave', uuid => {
+        const u = playerUnicycles[uuid]
+        console.log('player left, destroying unicycle', u)
+        u.destroy()
+        delete playerUnicycles[uuid]
+    })
 
-    cameraController.update()
+    socket.on('playerMove', (uuid, pose, velocities) => {
+        // console.log('received player move event')
+        if (!(uuid in playerUnicycles)) {
+            console.error(`Received update event for unknown player (${uuid})`, Object.keys(playerUnicycles))
+            return
+        }
 
-    // controls.update()
+        const u = playerUnicycles[uuid]
+        u.setPose(pose)
+        u.dPitchMomentum = velocities.wheelPitch
+    })
 
-    render()
+    window.addEventListener('resize', onWindowResize, false)
 
-    timeSeconds += tickDelta
-}
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight
+        camera.updateProjectionMatrix()
+        renderer.setSize(window.innerWidth, window.innerHeight)
+        render()
+    }
 
-function render() {
-    renderer.render(scene, camera)
-}
+    function loop() {
+        setTimeout(() => requestAnimationFrame(loop), 1000 / FPS)
 
-loop()
+        // mesh.rotation.x += 0.01
+        // mesh.rotation.y += 0.01
+
+        unicycle.handleInput()
+        unicycle.update()
+
+        for (const u of Object.values(playerUnicycles)) {
+            u.update()
+        }
+
+        socket.emit('playerMove', unicycle.getPose(), unicycle.getVelocities())
+
+        cameraController.update()
+
+        // controls.update()
+
+        render()
+
+        timeSeconds += tickDelta
+    }
+
+    function render() {
+        renderer.render(scene, camera)
+    }
+
+    loop()
+})()
