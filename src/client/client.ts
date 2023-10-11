@@ -333,6 +333,7 @@ class Unicycle {
             const line = `${this.name} just finished a lap in ${time}!`
             socket.emit('message', line)
             this.roundTime = 0
+            console.log('Emitted event')
         } else {
             this.roundTime += tickDelta
         }
@@ -532,6 +533,7 @@ scene.add(directionalLight);
     }
 
     socket.on('message', text => {
+        console.log('Received message event', text)
         log(text)
     })
 
