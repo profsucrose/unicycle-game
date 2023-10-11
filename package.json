@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "watch": "webpack --watch",
-    "start": "webpack serve --open",
-    "build": "webpack"
+    "webpack:watch": "webpack --watch --config ./src/client/webpack.config.js",
+    "webpack:start": "webpack serve --open --config ./src/client/webpack.config.js",
+    "webpack:build": "webpack --config ./src/client/webpack.config.js",
+    "server:build": "tsc -p ./src/server",
+    "server:dev": "concurrently -k \"tsc -p ./src/server -w\" \"nodemon ./dist/server/server.js\""
   },
   "keywords": [],
   "author": "",
@@ -15,19 +17,26 @@
   "devDependencies": {
     "@types/lodash": "^4.14.199",
     "@types/three": "^0.156.0",
+    "@types/uuid": "^9.0.5",
+    "concurrently": "^7.6.0",
     "css-loader": "^6.8.1",
     "html-webpack-plugin": "^5.5.3",
+    "nodemon": "^3.0.1",
     "style-loader": "^3.3.3",
     "three": "^0.157.0",
     "ts-loader": "^9.4.4",
-    "typescript": "^4.6.2",
+    "typescript": "^4.9.5",
     "webpack": "^5.88.2",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^4.15.1"
   },
   "dependencies": {
+    "@types/express": "^4.17.19",
+    "express": "^4.18.2",
     "lodash": "^4.17.21",
+    "random-animal-name-generator": "^0.1.1",
     "socket.io": "^4.7.2",
-    "socket.io-client": "^4.7.2"
+    "socket.io-client": "^4.7.2",
+    "uuid": "^9.0.1"
   }
 }
