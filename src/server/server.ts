@@ -51,7 +51,10 @@ io.on('connection', socket => {
 
         players[uuid] = player
 
+        const joinMessage = `${player.name} joined!`
+
         for (const s of sockets) {
+            s.emit('chat', joinMessage)
             if (s.id == socket.id) continue
             s.emit('playerJoin', player)
         }

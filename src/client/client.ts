@@ -119,6 +119,8 @@ class Unicycle {
     worldMeshRoll = 0
     worldMeshYaw = Math.PI
 
+    riderRoll = 0
+
     heading: THREE.Vector3
 
     name: string = "Player 1"
@@ -223,7 +225,11 @@ class Unicycle {
         if (keysHeld.KeyD || keysHeld.KeyA) {
             const leanSpeedDeg = 200
             const theta = degToRad((keysHeld.KeyD ? leanSpeedDeg : 0) + (keysHeld.KeyA ? -leanSpeedDeg : 0)) * tickDelta
+
+            // this.riderRoll += theta
+            // this.localRiderMesh.rotation.x = this.riderRoll
             this.localRiderMesh.rotateX(theta)
+
             this.localRiderMesh.geometry.computeBoundingBox()
             const size = new THREE.Vector3
             this.localRiderMesh.geometry.boundingBox.getSize(size)
@@ -288,7 +294,7 @@ class Unicycle {
         let torque = rX * gravity * wheelMass
 
 
-        this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
+        // this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
 
         if (Math.abs(this.worldMeshRoll) < Math.PI / 2) {
             this.worldMeshRoll += this.worldMeshRollMomentum * tickDelta
@@ -553,8 +559,6 @@ scene.add(directionalLight);
         const unicycle = new Unicycle(scene, p.pose, p.name)
         unicycle.setPose(player.pose)
         playerUnicycles[p.uuid] = unicycle
-
-        log(`${p.name} joined!`)
     })
 
     socket.on('playerLeave', uuid => {
@@ -583,6 +587,16 @@ scene.add(directionalLight);
         u.setVelocities(velocities)
     })
 
+    let gameFocused = true
+
+    chatInput.addEventListener('focusin', () => {
+        gameFocused = false
+    })
+
+    chatInput.addEventListener('focusout', () => {
+        gameFocused = true
+    })
+
     chatInput.addEventListener('keydown', (event) => {
         if (event.key == 'Enter') {
             const value = chatInput.value
@@ -593,8 +607,6 @@ scene.add(directionalLight);
                 const command = value.slice(1, i)
                 const args = value.slice(i + 1)
 
-                debugger
-
                 switch (command) {
                     case 'name':
                         socket.send('setName', args, () => {
@@ -604,12 +616,12 @@ scene.add(directionalLight);
                     default:
                         log(`Unexpected command '${value}'`)
                 }
-
-                return
+            } else {
+                // Send message to server
+                const text = `${unicycle.name}: ${value}`
+                socket.emit('chat', text)
             }
 
-            const text = `${unicycle.name}: ${value}`
-            socket.emit('chat', text)
             chatInput.value = ''
         }
     })
@@ -625,6 +637,7 @@ scene.add(directionalLight);
 
     function restart() {
         socket.emit('restart', pose => {
+            console.log('restart', pose)
             unicycle.setPose(pose)
         })
 
@@ -648,7 +661,8 @@ scene.add(directionalLight);
         // mesh.rotation.x += 0.01
         // mesh.rotation.y += 0.01
 
-        unicycle.handleInput()
+        if (gameFocused)
+            unicycle.handleInput()
         unicycle.update()
 
         for (const u of Object.values(playerUnicycles)) {
