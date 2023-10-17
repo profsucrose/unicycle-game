@@ -5,8 +5,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils'
 import { degToRad, inverseLerp, lerp, radToDeg } from 'three/src/math/MathUtils'
 import { io, Socket } from 'socket.io-client'
-import { ClientToServerEvents, Player, ServerToClientEvents } from '../typings/events'
-import { Loop, PlayerVelocities, Pose } from '../typings'
+import { ClientToServerEvents, Player, ServerToClientEvents } from '../shared/events'
+import { Loop, PlayerVelocities, Pose } from '../shared'
 import FinishLine from './finishLine.png'
 
 const params = new URL(window.location.href).searchParams
@@ -19,6 +19,9 @@ const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(`${host}:$
 const FPS = 60
 const tickDelta = 1 / FPS
 const friction = 0.9
+
+    let progress = 0
+
 
 // TODO: Move to prototype
 const xyz = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z]
@@ -229,7 +232,6 @@ class Unicycle {
         }
 
         if (keysHeld.ShiftLeft) {
-            console.log('Increasing speed')
             this.maxOmegaRadiansPerSecond = 6
         } else {
             this.maxOmegaRadiansPerSecond = 3
@@ -240,7 +242,17 @@ class Unicycle {
         return {
             wheelPitch: this.dPitchMomentum
         }
-    }    
+    }
+
+    setVelocities(velocities: PlayerVelocities) {
+        this.dPitchMomentum = velocities.wheelPitch
+    }
+
+    reset() {
+        this.worldMeshRoll = 0
+        this.worldMeshRollMomentum = 0
+        this.dPitchMomentum = 0
+    }
 
     getPose(): Pose {
         return {
@@ -317,21 +329,21 @@ class Unicycle {
 
         this.worldMesh.position.y += this.yVelocity * tickDelta
 
-        if (!loop.onMap(...xyz(this.worldMesh.position))) {
+        if (!loopTrack.onMap(...xyz(this.worldMesh.position))) {
             this.yVelocity -= gravity * tickDelta
         } else {
             this.yVelocity = 0
             this.worldMesh.position.y = 0
         }
 
-        const onFinishLine = loop.onFinishLine(...xyz(this.worldMesh.position))
+        const onFinishLine = loopTrack.onFinishLine(...xyz(this.worldMesh.position))
         
         const formatTime = (t: number) => `${Math.floor(t / 60)}:${(t < 10 ? '0' : '') + Math.floor(t)}`
         
-        if (onFinishLine && !this.justPassedFinishLine) {
+        if (onFinishLine && !this.justPassedFinishLine && progress > 0) {
             const time = formatTime(this.roundTime)
             const line = `${this.name} just finished a lap in ${time}!`
-            socket.emit('message', line)
+            socket.emit('chat', line)
             this.roundTime = 0
             console.log('Emitted event')
         } else {
@@ -477,7 +489,7 @@ const plane = (() => {
         .rotateX(Math.PI / 2);
 })()
 
-const loop = new Loop()
+const loopTrack = new Loop()
 
 const track = (() => {
     const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
@@ -532,11 +544,10 @@ scene.add(directionalLight);
         playerUnicycles[p.uuid] = new Unicycle(scene, p.pose, p.name)
     }
 
-    socket.on('message', text => {
+    socket.on('chat', text => {
         console.log('Received message event', text)
         log(text)
     })
-
 
     socket.on('playerJoin', p => {
         const unicycle = new Unicycle(scene, p.pose, p.name)
@@ -554,6 +565,12 @@ scene.add(directionalLight);
         delete playerUnicycles[uuid]
     })
 
+    socket.on('playerChangeName', (uuid, name) => {
+        console.log('player change name', uuid, name)
+        const u = uuid === player.uuid ? unicycle : playerUnicycles[uuid]
+        u.name = name
+    })
+
     socket.on('playerMove', (uuid, pose, velocities) => {
         // console.log('received player move event')
         if (!(uuid in playerUnicycles)) {
@@ -563,13 +580,36 @@ scene.add(directionalLight);
 
         const u = playerUnicycles[uuid]
         u.setPose(pose)
-        u.dPitchMomentum = velocities.wheelPitch
+        u.setVelocities(velocities)
     })
 
     chatInput.addEventListener('keydown', (event) => {
         if (event.key == 'Enter') {
-            const text = `${unicycle.name}: ${chatInput.value}`
-            socket.emit('message', text)
+            const value = chatInput.value
+            
+            if (value.startsWith('/')) {
+                // Run command
+                const i = value.indexOf(' ')
+                const command = value.slice(1, i)
+                const args = value.slice(i + 1)
+
+                debugger
+
+                switch (command) {
+                    case 'name':
+                        socket.send('setName', args, () => {
+                            log(`Updated name to '${value}'`)
+                        })
+                        break
+                    default:
+                        log(`Unexpected command '${value}'`)
+                }
+
+                return
+            }
+
+            const text = `${unicycle.name}: ${value}`
+            socket.emit('chat', text)
             chatInput.value = ''
         }
     })
@@ -583,8 +623,27 @@ scene.add(directionalLight);
         render()
     }
 
+    function restart() {
+        socket.emit('restart', pose => {
+            unicycle.setPose(pose)
+        })
+
+        unicycle.reset()
+    }
+
+    document.addEventListener('keydown', event => {
+        if (event.code === 'KeyR') restart()
+    })
+
+    let lastPosition = xyz(unicycle.getPosition())
+
     function loop() {
         setTimeout(() => requestAnimationFrame(loop), 1000 / FPS)
+
+        let newPosition = xyz(unicycle.getPosition())
+
+        let progressMade = loopTrack.getProgressMade(...lastPosition, ...newPosition)
+        progress += progressMade
 
         // mesh.rotation.x += 0.01
         // mesh.rotation.y += 0.01
