@@ -6,16 +6,19 @@ type Position = {
     z: number,
 }
 
-abstract class Track {
+export abstract class Track {
     abstract onMap(x: number, y: number, z: number): boolean
     abstract generateStartingPosition(): Pose
-
-    // TODO: Move to Position type
-    // Returns whatever "progress" has been made over a change in position, where progress
-    // is positive if the player is now closer to the end, or negative if they're closer to the beginning.
-    // Sign of total progress is tracked on client (should be server) so reversing behind the finish line doesn't count as a lap.
-    abstract getProgressMade(x1: number, y1: number, z1: number, x2: number, y2: number, z2: number): number
+    
+    // Distinguish completion based on whether player has reached
+    // in front of finish line -> behind finish line -> finish line
+    // in that order.
+    abstract onFinishLine(x: number, y: number, z: number): boolean
+    abstract aheadFinishLine(x: number, y: number, z: number): boolean
+    abstract behindFinishLine(x: number, y: number, z: number): boolean
 }
+
+const radToDeg = (degrees: number) => degrees * 180/Math.PI
 
 export class Loop extends Track {
     static readonly innerRadius = 5
@@ -26,9 +29,23 @@ export class Loop extends Track {
         return r >= Loop.innerRadius && r <= Loop.outerRadius && y <= 1e-6 && y >= -1
     }
 
+    aheadFinishLine(x: number, y: number, z: number): boolean {
+        // At 10 degrees
+        const theta = radToDeg(Math.atan2(z, x))
+        console.log('t', theta)
+        return Math.abs(theta - -10) < 3
+    }
+
+    behindFinishLine(x: number, y: number, z: number): boolean {
+        // At -10 degrees
+        const theta = radToDeg(Math.atan2(z, x))
+        return Math.abs(theta - 10) < 3
+    }
+
     onFinishLine(x: number, y: number, z: number): boolean {
-        const theta = Math.atan2(z, x)
-        return Math.abs(theta) < 5 * Math.PI/180
+        // At 0 degrees
+        const theta = radToDeg(Math.atan2(z, x))
+        return Math.abs(theta) < 3
     }
 
     tangentAt(x1: number, z1: number): [number, number] {
@@ -70,50 +87,79 @@ export class Loop extends Track {
 
 }
 
-// export class FigureEight extends Track {
-//     static readonly ringInnerRadius = 5
-//     static readonly ringOuterRadius = 10
+export class FigureEight extends Track {
+    static readonly radius = 50
 
-//     generateMesh(): THREE.Mesh {
-//         const geometry = new THREE.RingGeometry(FigureEight.ringInnerRadius, FigureEight.ringOuterRadius, 32);
-//         const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    /*
+      ----
+     /    \
+    | Top  |
+     \    /
+      -  -
+     /    \
+    | Bott |
+     \    /
+      ----
+    */
 
-//         const mesh = new THREE.Mesh(geometry, material)
-//             .rotateX(Math.PI / 2);
+    onMap(x: number, y: number, z: number): boolean {
+        const r = Math.hypot(x, z)
+        return r >= Loop.innerRadius && r <= Loop.outerRadius && y <= 1e-6 && y >= -1
+    }
 
-//         return mesh
-//     }
+    onFinishLine(x: number, y: number, z: number): boolean {
+        const dz = z - FigureEight.radius
+        const dx = x
 
-//     onMap(x: number, y: number, z: number): boolean {
-//         const r = Math.hypot(x, z)
-//         return r >= Loop.innerRadius && r <= Loop.outerRadius && y <= 1e-6 && y >= -1
-//     }
+        const theta = Math.atan2(dz, dx)
+        return Math.abs(theta) < 5 * Math.PI/180
+    }
 
-//     onFinishLine(x: number, y: number, z: number): boolean {
-//         const theta = Math.atan2(z, x)
-//         return Math.abs(theta) < 5 * Math.PI/180
-//     }
+    aheadFinishLine(x: number, y: number, z: number): boolean {
+        const dz = z - FigureEight.radius
+        const dx = x
 
-//     generateStartingPosition(): Pose {
-//         const r = Math.random() * (Loop.outerRadius - Loop.innerRadius) + Loop.innerRadius
-//         // const theta = Math.random() * 2 * Math.PI
-//         const theta = 0
-//         const x = Math.cos(theta) * r
-//         const z = Math.sin(theta) * r
-//         // const y = 1e-6
-//         const y = 3
+        const theta = Math.atan2(dz, dx)
+        return Math.abs(theta - -10) < 5 * Math.PI/180
+    }
 
-//         const yaw = Math.atan2(-Math.sin(theta), Math.cos(theta)) + Math.PI/2
+    behindFinishLine(x: number, y: number, z: number): boolean {
+        const dz = z - FigureEight.radius
+        const dx = x
 
-//         console.log('yaw', yaw)
+        const theta = Math.atan2(dz, dx)
+        return Math.abs(theta - 10) < 5 * Math.PI/180
+    }
 
-//         return {
-//             x,
-//             y,
-//             z,
-//             yaw,
-//             roll: 0
-//         }
-//     }
+    generateStartingPosition(): Pose {
+        const r = Math.random() * (Loop.outerRadius - Loop.innerRadius) + Loop.innerRadius
+        // const theta = Math.random() * 2 * Math.PI
+        const theta = 0
+        const x = Math.cos(theta) * r
+        const z = Math.sin(theta) * r
+        // const y = 1e-6
+        const y = 3
 
-// }
+        const yaw = Math.atan2(-Math.sin(theta), Math.cos(theta)) + Math.PI/2
+
+        console.log('yaw', yaw)
+
+        return {
+            x,
+            y,
+            z,
+            yaw,
+            roll: 0
+        }
+    }
+
+}
+
+export type TrackType = 'FigureEight' | 'Loop'
+
+export const trackTypeToTrack: {
+    [key in TrackType]: typeof FigureEight | typeof Loop
+} = {
+    'FigureEight': FigureEight,
+    'Loop': Loop
+}

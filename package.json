@@ -9,7 +9,7 @@
     "webpack:start": "webpack serve --open --config ./src/client/webpack.config.js",
     "webpack:build": "webpack --config ./src/client/webpack.config.js",
     "server:build": "tsc -p ./src/server/tsconfig.json",
-    "server:dev": "concurrently -k \"tsc -p ./src/server/tsconfig.json -w\" \"nodemon ./dist/server/server.js\""
+    "server:dev": "npm run server:build && concurrently -k \"tsc -p ./src/server/tsconfig.json -w\" \"nodemon ./dist/server/server.js\""
   },
   "keywords": [],
   "author": "",

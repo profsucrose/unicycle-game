@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { ClientToServerEvents, ServerToClientEvents, Loop, Player } from '../shared'
+import { ClientToServerEvents, ServerToClientEvents, Loop, Player, LeaderboardEntry, Leaderboard, formatTime, FigureEight, TrackType, trackTypeToTrack, Track } from '../shared'
 import { v4 as uuidv4 } from 'uuid'
 import generateRandomAnimalName from 'random-animal-name-generator'
 
@@ -20,9 +20,23 @@ const io = new Server<
 
 const port = 8082
 
-const track = new Loop()
+let trackType: TrackType = 'Loop'
+const track: Track = new trackTypeToTrack[trackType]()
 
-const players: {[uuid: string]: Player} = {} 
+interface PlayerEntry extends Player {
+    progress: 0 | 1 | 2,
+    lapTime: number
+}
+
+const players: {[uuid: string]: PlayerEntry} = {} 
+
+const leaderboard: Leaderboard = []
+
+setInterval(() => {
+    for (const player of Object.values(players)) {
+        player.lapTime += 10/1000
+    }
+}, 10)
 
 io.on('connection', socket => {
     console.log('new connection!')
@@ -40,14 +54,22 @@ io.on('connection', socket => {
 
         let name = existingName ?? generateRandomAnimalName()
 
-        const player: Player = {
+        const player: PlayerEntry = {
             name,
             uuid: uuid,
-            pose: startingPose
+            pose: startingPose,
+            progress: 0,
+            lapTime: 0
         }
 
         console.log('sending players', players)
-        cb(player, Object.values(players))
+
+        cb({
+            player, 
+            players: Object.values(players),
+            leaderboard,
+            trackType
+        })
 
         players[uuid] = player
 
@@ -61,6 +83,49 @@ io.on('connection', socket => {
 
         socket.on('playerMove', async (pose, velocities) => {
             const sockets = await io.fetchSockets()
+
+            // Handle track progression
+
+            const ahead = track.aheadFinishLine(pose.x, pose.y, pose.z)
+            const behind = track.behindFinishLine(pose.x, pose.y, pose.z)
+            const finished = track.onFinishLine(pose.x, pose.y, pose.z)
+            const progress = player.progress
+            
+            let finishedLap = false
+            
+            if (ahead && progress == 0) player.progress = 1
+            if (behind && progress == 1) player.progress = 2
+            if (finished) {
+                // If went through ahead then behind, did a lap
+                if (progress == 2) finishedLap = true
+
+                // Otherwise, must have reversed back. So reset to 0
+                else player.progress = 0
+            }
+
+            console.log('player progress', progress)
+
+            if (finishedLap) {
+                const formattedTime = formatTime(player.lapTime)
+                io.emit('chat', `${player.name} finished a lap in ${formattedTime}!`)
+
+                const i = leaderboard.findIndex(e => e.lapTime > player.lapTime)
+
+                const entry = {
+                    name,
+                    lapTime: player.lapTime,
+                }
+
+                leaderboard.push(entry)
+
+                // Should be inserted in order, but weird bug
+                leaderboard.sort((a, b) => a.lapTime - b.lapTime)
+
+                io.emit('updateLeaderboard', leaderboard)
+
+                player.progress = 0
+                player.lapTime = 0
+            }
 
             // Relay new position to all other players
             for (const s of sockets) {
@@ -97,6 +162,8 @@ io.on('connection', socket => {
             io.emit('playerMove', uuid, startingPose, {
                 wheelPitch: 0
             })
+
+            player.lapTime = 0
         })
 
         socket.on('disconnect', async () => {

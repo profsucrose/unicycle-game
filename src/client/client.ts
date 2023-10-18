@@ -6,8 +6,10 @@ import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUti
 import { degToRad, inverseLerp, lerp, radToDeg } from 'three/src/math/MathUtils'
 import { io, Socket } from 'socket.io-client'
 import { ClientToServerEvents, Player, ServerToClientEvents } from '../shared/events'
-import { Loop, PlayerVelocities, Pose } from '../shared'
+import { FigureEight, InitClient, Leaderboard, Loop, PlayerVelocities, Pose, Track, TrackType, formatTime, trackTypeToTrack } from '../shared'
 import FinishLine from './finishLine.png'
+
+const USE_DEBUG_CAMERA = false
 
 const params = new URL(window.location.href).searchParams
 
@@ -19,9 +21,6 @@ const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(`${host}:$
 const FPS = 60
 const tickDelta = 1 / FPS
 const friction = 0.9
-
-    let progress = 0
-
 
 // TODO: Move to prototype
 const xyz = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z]
@@ -36,7 +35,48 @@ Object.assign(positionText.style, {
     userSelect: 'none'
 })
 positionText.innerText = 'Test'
-document.body.appendChild(positionText)
+// document.body.appendChild(positionText)
+
+const leaderboardTable = document.createElement('table')
+Object.assign(leaderboardTable.style, {
+    position: 'absolute',
+    left: '10px',
+    top: '10px',
+    color: 'white',
+    fontFamily: 'monospace',
+    userSelect: 'none',
+    textAlign: 'left',
+})
+leaderboardTable.innerHTML = `
+    <style>td, th { padding: 0 30px 0 0; }</style>
+    <tr>
+        <th>Player</td>
+        <th>Lap</th>
+    </tr>
+`
+document.body.appendChild(leaderboardTable)
+
+let leaderboardTrs: HTMLTableRowElement[] = []
+
+function setLeaderboardRows(rows: Leaderboard) {
+    leaderboardTrs.forEach(tr => tr.remove())    
+
+    for (const { name, lapTime } of rows) {
+        const tr = document.createElement('tr')
+
+        const nameTd = document.createElement('td')
+        nameTd.innerText = name
+        tr.appendChild(nameTd)
+
+        const lapTd = document.createElement('td')
+        lapTd.innerText = formatTime(lapTime)
+        tr.appendChild(lapTd)
+
+        leaderboardTable.appendChild(tr)
+
+        leaderboardTrs.push(tr)
+    }
+}
 
 const logs = document.createElement('pre')
 Object.assign(logs.style, {
@@ -91,6 +131,8 @@ document.addEventListener('keyup', (event) => {
 
 const clamp = (x: number, min: number, max: number) => Math.max(min, Math.min(max, x))
 
+let track: Track
+
 class Unicycle {
     localMesh: THREE.Mesh
     worldMesh: THREE.Mesh
@@ -127,8 +169,6 @@ class Unicycle {
     nameBillboard: THREE.Mesh
 
     scene: THREE.Scene
-
-    justPassedFinishLine = true
 
     roundTime = 0
 
@@ -233,14 +273,14 @@ class Unicycle {
         const size = new THREE.Vector3
         this.localRiderMesh.geometry.boundingBox.getSize(size)
 
-        this.localRiderMesh.position.set(0, 0, 0)
+        // this.localRiderMesh.position.set(0, size.y, 0)
 
         this.riderRoll += theta
         this.localRiderMesh.rotateX(theta)
-        const dx = Math.sin(theta) * size.y / 2
-        // this.localRiderMesh.translateZ(dx)
+        const dx = Math.sin(theta) * size.y/2
+        this.localRiderMesh.translateZ(dx)
 
-        this.localRiderMesh.position.set(oldPosition.x, oldPosition.y, oldPosition.z + dx)
+        // this.localRiderMesh.position.set(oldPosition.x, oldPosition.y, oldPosition.z + dx)
     }
 
     handleInput() {
@@ -344,31 +384,12 @@ class Unicycle {
 
         this.worldMesh.position.y += this.yVelocity * tickDelta
 
-        if (!loopTrack.onMap(...xyz(this.worldMesh.position))) {
+        if (!track.onMap(...xyz(this.worldMesh.position))) {
             this.yVelocity -= gravity * tickDelta
         } else {
             this.yVelocity = 0
             this.worldMesh.position.y = 0
         }
-
-        const onFinishLine = loopTrack.onFinishLine(...xyz(this.worldMesh.position))
-        
-        const formatTime = (t: number) => `${Math.floor(t / 60)}:${(t < 10 ? '0' : '') + Math.floor(t)}`
-        
-        console.log(progress, progress > 0.1)
-        
-        if (onFinishLine && !this.justPassedFinishLine && progress > 5) {
-            const time = formatTime(this.roundTime)
-            const line = `${this.name} just finished a lap in ${time}!`
-            socket.emit('chat', line)
-            this.roundTime = 0
-            console.log('Emitted event')
-            progress = 0
-        } else {
-            this.roundTime += tickDelta
-        }
-
-        this.justPassedFinishLine = onFinishLine
 
         this.localMesh.setRotationFromEuler(new THREE.Euler(this.roll, this.yaw, this.pitch))
 
@@ -507,9 +528,83 @@ const plane = (() => {
         .rotateX(Math.PI / 2);
 })()
 
-const loopTrack = new Loop()
+function generateFigureEightMesh(): THREE.Mesh {
+    const n = 200    
 
-const track = (() => {
+    const segments = []
+
+    let x1, y1, z1
+
+    const width = 8
+
+    for (let i = 0; i < n; i++) {
+        let t = i/(n-1) * 2 * Math.PI
+
+        let x = FigureEight.radius * Math.cos(t) / (1 + Math.sin(t)**2)
+        let z = (FigureEight.radius * Math.sin(t) * Math.cos(t)) / (1 + Math.sin(t)**2)
+
+        let y = 10 * (1 - clamp(Math.abs(t - 4.72), 0, 1))
+
+        y = clamp(y, 0, 8)
+
+        if (i == 0) {
+            x1 = x
+            y1 = y
+            z1 = z
+            continue
+        }
+
+        const length = Math.hypot(x - x1, z - z1) + 0.2
+        
+        const angle = Math.atan2(x - x1, z - z1)
+
+        const vertAngle = -Math.atan2(y - y1, 1)
+        
+        const segment = new THREE.PlaneGeometry(width, length)
+            // .rotateX(degToRad(30))
+            .rotateX(vertAngle + Math.PI/2)
+            .rotateY(angle)
+            .translate(x, y, z)
+
+        segments.push(segment)
+
+        x1 = x
+        y1 = y
+        z1 = z
+    }
+
+    const geom = BufferGeometryUtils.mergeGeometries(segments)
+
+    const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+
+    const figureEight = new THREE.Mesh(geom, material) 
+    
+    const finishLineWidth = width
+
+    console.log('finish line', FinishLine)
+    const texture = new THREE.TextureLoader().load(FinishLine)
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set( 16, 2 );
+    texture.magFilter = THREE.NearestFilter
+    const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
+    const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
+
+    const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
+        .rotateX(Math.PI/2)
+        .rotateZ(Math.PI/4 + Math.PI/2)
+
+    finishLine.position.set(0, 0.01, 0)
+
+    const mesh = new THREE.Mesh()
+
+    mesh.add(figureEight)
+    mesh.add(finishLine)
+
+    return mesh
+}
+
+function generateLoopMesh(): THREE.Mesh {
     const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
     const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
     
@@ -517,6 +612,7 @@ const track = (() => {
         .rotateX(Math.PI / 2);
 
     const finishLineWidth = Loop.outerRadius - Loop.innerRadius
+
     console.log('finish line', FinishLine)
     const texture = new THREE.TextureLoader().load(FinishLine)
     texture.wrapS = THREE.RepeatWrapping;
@@ -533,9 +629,14 @@ const track = (() => {
     mesh.add(finishLine)
 
     return mesh
-})()
+}
 
-scene.add(track);
+const trackMeshGenerators: {
+    [key in TrackType]: () => THREE.Mesh
+} = {
+    FigureEight: generateFigureEightMesh,
+    Loop: generateLoopMesh
+}
 
 const axesHelper = new THREE.AxesHelper(5);
 scene.add(axesHelper);
@@ -546,9 +647,20 @@ scene.add(directionalLight);
 ; (async () => {
     const existingName = localStorage.getItem('name')    
 
-    const [player, players] = (await new Promise<[Player, Player[]]>((resolve) => {
-        socket.emit('join', existingName, (player: Player, players: Player[]) => resolve([player, players]))
+    const {
+        player,
+        players,
+        leaderboard,
+        trackType
+    } = (await new Promise<InitClient>((resolve) => {
+        socket.emit('join', existingName, resolve)
     }))
+
+    track = new trackTypeToTrack[trackType]()
+
+    const mesh = trackMeshGenerators[trackType]()
+
+    scene.add(mesh)
 
     console.log('Joined server! My uuid', player.uuid)
     console.log('Other players currently on server:', players)
@@ -564,6 +676,15 @@ scene.add(directionalLight);
     for (const p of players) {
         playerUnicycles[p.uuid] = new Unicycle(scene, p.pose, p.name)
     }
+
+    playerUnicycles[player.uuid] = unicycle
+
+    setLeaderboardRows(leaderboard)
+
+    socket.on('updateLeaderboard', leaderboard => {
+        console.log('new leaderboard', leaderboard)
+        setLeaderboardRows(leaderboard)
+    })
 
     socket.on('chat', text => {
         console.log('Received message event', text)
@@ -596,9 +717,16 @@ scene.add(directionalLight);
     })
 
     socket.on('playerMove', (uuid, pose, velocities) => {
-        // console.log('received player move event')
+        console.log('received player move event')
         if (!(uuid in playerUnicycles)) {
             console.error(`Received update event for unknown player (${uuid})`, Object.keys(playerUnicycles))
+            return
+        }
+
+        if (uuid == player.uuid) {
+            // Don't update local position based on server.
+            // *If* cared about cheating, then would have guarentees, but
+            // don't bother.
             return
         }
 
@@ -662,9 +790,14 @@ scene.add(directionalLight);
             // HACK: Should just reset unicycle pose,
             // but weird bug with resetting rider roll.
             // So reconstruct the unicycle instead
+
+            delete playerUnicycles[player.uuid]
+
             unicycle.destroy()
             unicycle = new Unicycle(scene, pose, player.name)
             cameraController = new UnicycleCameraController(camera, unicycle)
+
+            playerUnicycles[player.uuid] = unicycle
         })
     }
 
@@ -672,24 +805,14 @@ scene.add(directionalLight);
         if (event.code === 'KeyR') restart()
     })
 
-    let lastPosition = xyz(unicycle.getPosition())
-
     function loop() {
         setTimeout(() => requestAnimationFrame(loop), 1000 / FPS)
-
-        let newPosition = xyz(unicycle.getPosition())
-
-        let progressMade = loopTrack.getProgressMade(...lastPosition, ...newPosition)
-        progress += progressMade
-
-        lastPosition = newPosition
 
         // mesh.rotation.x += 0.01
         // mesh.rotation.y += 0.01
 
         if (gameFocused)
             unicycle.handleInput()
-        unicycle.update()
 
         for (const u of Object.values(playerUnicycles)) {
             u.update()
@@ -697,9 +820,11 @@ scene.add(directionalLight);
 
         socket.emit('playerMove', unicycle.getPose(), unicycle.getVelocities())
 
-        cameraController.update()
-
-        // controls.update()
+        if (USE_DEBUG_CAMERA) {
+            controls.update()
+        } else {
+            cameraController.update()
+        }
 
         render()
 
