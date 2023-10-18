@@ -31,10 +31,19 @@ export class Loop extends Track {
         return Math.abs(theta) < 5 * Math.PI/180
     }
 
+    tangentAt(x1: number, z1: number): [number, number] {
+        const a = Math.atan2(z1, x1)
+        return [-Math.sin(a), Math.cos(a)]
+    }
+
     getProgressMade(x1: number, y1: number, z1: number, x2: number, y2: number, z2: number): number {
-        const startAngle = Math.atan2(z1, x1)
-        const endAngle = Math.atan2(z2, x2)
-        return startAngle - endAngle
+        const dx = x2 - x1,
+            dz = z2 - z1
+        const [tx, tz] = this.tangentAt(x1, z1)
+        console.log('tan', tx, tz, 'delta', dx, dz)
+        const dot = -(dx * tx + dz * tz)
+        console.log('dot', dot)
+        return dot
     }
 
     generateStartingPosition(): Pose {

@@ -20,7 +20,7 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
     chat: (text: string) => void
-    join: (cb: ((player: Player, players: Player[]) => void)) => void
+    join: (name: string | null, cb: ((player: Player, players: Player[]) => void)) => void
     restart: (cb: ((newPose: Pose) => void)) => void
     playerMove: (newPose: Pose, velocities: PlayerVelocities) => void
     setName: (name: string, ack: () => void) => void

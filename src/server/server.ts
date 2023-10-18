@@ -27,7 +27,7 @@ const players: {[uuid: string]: Player} = {}
 io.on('connection', socket => {
     console.log('new connection!')
 
-    socket.on('join', async cb => {
+    socket.on('join', async (existingName, cb) => {
         const uuid = uuidv4()
 
         socket.data.uuid = uuid
@@ -38,7 +38,7 @@ io.on('connection', socket => {
 
         const startingPose = track.generateStartingPosition()
 
-        let name = generateRandomAnimalName()
+        let name = existingName ?? generateRandomAnimalName()
 
         const player: Player = {
             name,
@@ -70,6 +70,8 @@ io.on('connection', socket => {
                 s.emit('playerMove', uuid, pose, velocities)
             }
         })
+
+        console.log('New server version')
 
         socket.on('setName', (newName, ack) => {
             console.log('player changing name to', newName)

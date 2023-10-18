@@ -137,6 +137,14 @@ class Unicycle {
 
     leanSpeedDeg = 200
 
+    updateName(newName: string) {
+        this.name = newName
+        if (this.nameBillboard) {
+            this.scene.remove(this.nameBillboard)
+        }
+        this.setNameBillboard(newName)
+    }
+
     setPosition(position: THREE.Vector3) {
         this.worldMesh.position.set(position.x, position.y, position.z)
     }
@@ -218,6 +226,23 @@ class Unicycle {
         return mesh
     }
 
+    rotateRider(theta: number) {
+        const oldPosition = this.localRiderMesh.position.clone()
+
+        this.localRiderMesh.geometry.computeBoundingBox()
+        const size = new THREE.Vector3
+        this.localRiderMesh.geometry.boundingBox.getSize(size)
+
+        this.localRiderMesh.position.set(0, 0, 0)
+
+        this.riderRoll += theta
+        this.localRiderMesh.rotateX(theta)
+        const dx = Math.sin(theta) * size.y / 2
+        // this.localRiderMesh.translateZ(dx)
+
+        this.localRiderMesh.position.set(oldPosition.x, oldPosition.y, oldPosition.z + dx)
+    }
+
     handleInput() {
         if (keysHeld.KeyW) this.dPitchMomentum -= this.maxOmegaRadiansPerSecond * tickDelta
         if (keysHeld.KeyS) this.dPitchMomentum += this.maxOmegaRadiansPerSecond * tickDelta
@@ -225,16 +250,7 @@ class Unicycle {
         if (keysHeld.KeyD || keysHeld.KeyA) {
             const leanSpeedDeg = 200
             const theta = degToRad((keysHeld.KeyD ? leanSpeedDeg : 0) + (keysHeld.KeyA ? -leanSpeedDeg : 0)) * tickDelta
-
-            // this.riderRoll += theta
-            // this.localRiderMesh.rotation.x = this.riderRoll
-            this.localRiderMesh.rotateX(theta)
-
-            this.localRiderMesh.geometry.computeBoundingBox()
-            const size = new THREE.Vector3
-            this.localRiderMesh.geometry.boundingBox.getSize(size)
-            const dx = Math.sin(theta) * size.y / 2
-            this.localRiderMesh.translateZ(dx)
+            this.rotateRider(theta)
         }
 
         if (keysHeld.ShiftLeft) {
@@ -271,7 +287,6 @@ class Unicycle {
     }
 
     update() {
-
         // TODO: Optimize heap allocations
 
         this.centerToBottomUnrotated.applyEuler(new THREE.Euler(this.roll, this.yaw, this.pitch))
@@ -293,13 +308,11 @@ class Unicycle {
             + Math.sin(this.localRiderMesh.rotation.x) * (riderSize.y / 2 + this.localRiderOffsetY))
         let torque = rX * gravity * wheelMass
 
-
-        // this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
+        this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
 
         if (Math.abs(this.worldMeshRoll) < Math.PI / 2) {
             this.worldMeshRoll += this.worldMeshRollMomentum * tickDelta
         }
-
 
         this.worldMesh.rotation.x = clamp(this.worldMesh.rotation.x, -Math.PI / 2, Math.PI / 2)
 
@@ -323,10 +336,6 @@ class Unicycle {
         this.worldMesh.position.add(this.heading.multiplyScalar(speed * tickDelta))
 
         this.worldMeshYaw -= Math.sign(this.worldMeshRoll) * speed / k * tickDelta
-
-
-        // this.worldMeshRoll = Math.sin(timeSeconds)
-
         this.worldMesh.rotation.set(0, 0, 0)
         this.worldMesh.rotateY(this.worldMeshYaw)
         this.worldMesh.rotateX(this.worldMeshRoll)
@@ -346,12 +355,15 @@ class Unicycle {
         
         const formatTime = (t: number) => `${Math.floor(t / 60)}:${(t < 10 ? '0' : '') + Math.floor(t)}`
         
-        if (onFinishLine && !this.justPassedFinishLine && progress > 0) {
+        console.log(progress, progress > 0.1)
+        
+        if (onFinishLine && !this.justPassedFinishLine && progress > 5) {
             const time = formatTime(this.roundTime)
             const line = `${this.name} just finished a lap in ${time}!`
             socket.emit('chat', line)
             this.roundTime = 0
             console.log('Emitted event')
+            progress = 0
         } else {
             this.roundTime += tickDelta
         }
@@ -407,34 +419,34 @@ class Unicycle {
         //     .rotateX(Math.PI/2)
         // scene.add(this.curvatureRing);
 
-        {
-            const geometry = new THREE.PlaneGeometry(2, 0.5)
-            const canvas = document.createElement('canvas')
-            canvas.width = 400
-            canvas.height = 100
-            const padding = 10
-            const ctx = canvas.getContext('2d')
-            ctx.fillStyle = '#00f'
-            ctx.fillRect(0, 0, canvas.width, canvas.height)
-            const fontSize = Math.floor(canvas.width / (this.name.length * 1.2)) * 2
-            ctx.font = `bold ${fontSize}px monospace`
-            ctx.fillStyle = '#f00'
-            ctx.fillText(this.name, fontSize * 0.05, canvas.height / 2 + fontSize / 4)
-            const texture = new THREE.CanvasTexture(canvas)
-            const material = new THREE.MeshBasicMaterial({ map: texture });
-            const nameBillboard = new THREE.Mesh(geometry, material)
-
-            scene.add(nameBillboard)
-            this.nameBillboard = nameBillboard
-            // this.nameBillboard.position.set(20, 5, 0)
-        }
-
+        this.setNameBillboard(name)
 
         scene.add(this.worldMesh)
 
         this.setPose(startingPose)
     
         this.scene = scene
+    }
+
+    setNameBillboard(name: string) {
+        const geometry = new THREE.PlaneGeometry(2, 0.5)
+        const canvas = document.createElement('canvas')
+        canvas.width = 400
+        canvas.height = 100
+        const padding = 10
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#00f'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        const fontSize = Math.floor(canvas.width / (this.name.length * 1.2)) * 2
+        ctx.font = `bold ${fontSize}px monospace`
+        ctx.fillStyle = '#f00'
+        ctx.fillText(this.name, fontSize * 0.05, canvas.height / 2 + fontSize / 4)
+        const texture = new THREE.CanvasTexture(canvas)
+        const material = new THREE.MeshBasicMaterial({ map: texture });
+        const nameBillboard = new THREE.Mesh(geometry, material)
+
+        scene.add(nameBillboard)
+        this.nameBillboard = nameBillboard
     }
 
     destroy() {
@@ -532,17 +544,20 @@ const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
 scene.add(directionalLight);
 
 ; (async () => {
+    const existingName = localStorage.getItem('name')    
+
     const [player, players] = (await new Promise<[Player, Player[]]>((resolve) => {
-        socket.emit('join', (player: Player, players: Player[]) => resolve([player, players]))
+        socket.emit('join', existingName, (player: Player, players: Player[]) => resolve([player, players]))
     }))
 
     console.log('Joined server! My uuid', player.uuid)
     console.log('Other players currently on server:', players)
 
-    const unicycle = new Unicycle(scene, player.pose, player.name)
-    unicycle.setPose(player.pose)
+    let unicycle = new Unicycle(scene, player.pose, player.name)
 
-    const cameraController = new UnicycleCameraController(camera, unicycle)
+    localStorage.setItem('name', player.name)
+
+    let cameraController = new UnicycleCameraController(camera, unicycle)
 
     const playerUnicycles: {[uuid: string]: Unicycle} = {}
 
@@ -571,8 +586,13 @@ scene.add(directionalLight);
 
     socket.on('playerChangeName', (uuid, name) => {
         console.log('player change name', uuid, name)
-        const u = uuid === player.uuid ? unicycle : playerUnicycles[uuid]
-        u.name = name
+        if (uuid === player.uuid) {
+            player.name = name
+            unicycle.updateName(name)
+        }  else {
+            const u = playerUnicycles[uuid]
+            u.updateName(name)
+        }
     })
 
     socket.on('playerMove', (uuid, pose, velocities) => {
@@ -609,9 +629,11 @@ scene.add(directionalLight);
 
                 switch (command) {
                     case 'name':
-                        socket.send('setName', args, () => {
-                            log(`Updated name to '${value}'`)
+                        console.log('sending setName event')
+                        socket.emit('setName', args, () => {
+                            log(`Updated name to '${args}'`)
                         })
+                        localStorage.setItem('name', args)
                         break
                     default:
                         log(`Unexpected command '${value}'`)
@@ -637,11 +659,13 @@ scene.add(directionalLight);
 
     function restart() {
         socket.emit('restart', pose => {
-            console.log('restart', pose)
-            unicycle.setPose(pose)
+            // HACK: Should just reset unicycle pose,
+            // but weird bug with resetting rider roll.
+            // So reconstruct the unicycle instead
+            unicycle.destroy()
+            unicycle = new Unicycle(scene, pose, player.name)
+            cameraController = new UnicycleCameraController(camera, unicycle)
         })
-
-        unicycle.reset()
     }
 
     document.addEventListener('keydown', event => {
@@ -657,6 +681,8 @@ scene.add(directionalLight);
 
         let progressMade = loopTrack.getProgressMade(...lastPosition, ...newPosition)
         progress += progressMade
+
+        lastPosition = newPosition
 
         // mesh.rotation.x += 0.01
         // mesh.rotation.y += 0.01
