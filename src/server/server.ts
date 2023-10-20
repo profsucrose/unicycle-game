@@ -20,7 +20,7 @@ const io = new Server<
 
 const port = 8082
 
-let trackType: TrackType = 'Loop'
+let trackType: TrackType = 'FigureEight'
 const track: Track = new trackTypeToTrack[trackType]()
 
 interface PlayerEntry extends Player {

@@ -6,10 +6,10 @@ import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUti
 import { degToRad, inverseLerp, lerp, radToDeg } from 'three/src/math/MathUtils'
 import { io, Socket } from 'socket.io-client'
 import { ClientToServerEvents, Player, ServerToClientEvents } from '../shared/events'
-import { FigureEight, InitClient, Leaderboard, Loop, PlayerVelocities, Pose, Track, TrackType, formatTime, trackTypeToTrack } from '../shared'
+import { FigureEight, InitClient, Leaderboard, Loop, PlayerVelocities, Pose, Track, TrackType, clamp, formatTime, trackTypeToTrack } from '../shared'
 import FinishLine from './finishLine.png'
 
-const USE_DEBUG_CAMERA = false
+let USE_DEBUG_CAMERA = false
 
 const params = new URL(window.location.href).searchParams
 
@@ -129,9 +129,7 @@ document.addEventListener('keyup', (event) => {
     if (event.code in keysHeld) (keysHeld as any)[event.code] = false
 })
 
-const clamp = (x: number, min: number, max: number) => Math.max(min, Math.min(max, x))
-
-let track: Track
+let trackMesh: TrackMesh
 
 class Unicycle {
     localMesh: THREE.Mesh
@@ -384,7 +382,7 @@ class Unicycle {
 
         this.worldMesh.position.y += this.yVelocity * tickDelta
 
-        if (!track.onMap(...xyz(this.worldMesh.position))) {
+        if (false) { // !trackMesh.onMesh(this.worldMesh.position)) {
             this.yVelocity -= gravity * tickDelta
         } else {
             this.yVelocity = 0
@@ -528,114 +526,248 @@ const plane = (() => {
         .rotateX(Math.PI / 2);
 })()
 
-function generateFigureEightMesh(): THREE.Mesh {
-    const n = 200    
+class QuadStripCollider {
+    quads: [THREE.Vector3, THREE.Vector3, THREE.Vector3][] = []
 
-    const segments = []
+    constructor(positionAttributes: Float32Array) {
+        for (let i = 0; i < positionAttributes.length; i += 3 * 4) {
+            const j = i + 3
+            const k = i + 6
+            const l = i + 9
 
-    let x1, y1, z1
+            const xs = [
+                positionAttributes[i],
+                positionAttributes[j],
+                positionAttributes[k],
+                positionAttributes[l],
+            ]
 
-    const width = 8
+            const ys = [
+                positionAttributes[i + 1],
+                positionAttributes[j + 1],
+                positionAttributes[k + 1],
+                positionAttributes[l + 1],
+            ]
 
-    for (let i = 0; i < n; i++) {
-        let t = i/(n-1) * 2 * Math.PI
+            const zs = [
+                positionAttributes[i + 2],
+                positionAttributes[j + 2],
+                positionAttributes[k + 2],
+                positionAttributes[l + 2],
+            ]
 
-        let x = FigureEight.radius * Math.cos(t) / (1 + Math.sin(t)**2)
-        let z = (FigureEight.radius * Math.sin(t) * Math.cos(t)) / (1 + Math.sin(t)**2)
+            const minX = Math.min(...xs)
+            const maxX = Math.max(...xs)
 
-        let y = 10 * (1 - clamp(Math.abs(t - 4.72), 0, 1))
+            const minY = Math.min(...ys)
+            const maxY = Math.max(...ys)
 
-        y = clamp(y, 0, 8)
+            const minZ = Math.min(...zs)
+            const maxZ = Math.max(...zs)
 
-        if (i == 0) {
+            const a = new THREE.Vector3(minX, minY, minZ)
+            const b = new THREE.Vector3(minX, maxY, maxZ)
+            const c = new THREE.Vector3(maxX, minY, minZ)
+
+            const u = b.sub(a)
+            const v = c.sub(a)
+
+            const a1 = new THREE.ArrowHelper(u, a)
+            const a2 = new THREE.ArrowHelper(v, a)
+
+            const rand255 = () => Math.random()
+            const color = new THREE.Color(rand255(), rand255(), rand255())
+            a1.setColor(color)
+            a2.setColor(color)
+
+            scene.add(a1)
+            scene.add(a2)
+
+            this.quads.push([a, u, v])
+        }
+    }
+
+    onQuadStrip(position: THREE.Vector3) {
+        return this.quads.some(([a, u, v]) => QuadStripCollider.onQuad(position, a, u, v))
+    }
+
+    static onQuad(position: THREE.Vector3, origin: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3): boolean {
+        const x = position.x - origin.x
+        const z = position.z - origin.z
+
+        const a = u.x
+        const b = v.x
+        const c = u.y
+        const d = v.y
+
+        const det = a*d - b*c
+
+        // Transform x and z to be
+        // in basis of parallelogram.
+        // If xt and zt are less than 1, inside
+        const xt = (d*x - b*z)/det
+        const zt = (-c*x + a*z)/det
+
+        return 0 <= xt && xt <= 1
+            && 0 <= zt && zt <= 1
+    }
+}
+
+abstract class TrackMesh {
+    abstract getMesh(): THREE.Mesh
+    abstract onMesh(position: THREE.Vector3): boolean
+}
+
+class LoopMesh extends TrackMesh {
+    static readonly mesh = (() => {
+        const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
+        const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+        
+        const mesh = new THREE.Mesh(geometry, material)
+            .rotateX(Math.PI / 2);
+
+        const finishLineWidth = Loop.outerRadius - Loop.innerRadius
+
+        console.log('finish line', FinishLine)
+        const texture = new THREE.TextureLoader().load(FinishLine)
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set( 16, 2 );
+        texture.magFilter = THREE.NearestFilter
+        const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
+        const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
+
+        const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
+
+        finishLine.position.set(Loop.innerRadius + finishLineWidth/2 - 0.05, 0.0, -0.01)
+
+        mesh.add(finishLine)
+
+        return mesh
+    })()
+
+    getMesh(): THREE.Mesh {
+        return LoopMesh.mesh
+    }
+
+    onMesh(position: THREE.Vector3): boolean {
+        const r = Math.hypot(position.x, position.z)
+        return r >= Loop.innerRadius && r <= Loop.outerRadius && position.y <= 1e-6 && position.y >= -1
+    }
+}
+
+class FigureEightMesh extends TrackMesh {
+    mesh: THREE.Mesh    
+    collider: QuadStripCollider
+
+    constructor() {
+        super()
+
+        const n = 200
+
+        const segments = []
+
+        let x1, y1, z1
+
+        const width = 8
+
+        const sample = (t: number) => {
+            let x = FigureEight.radius * Math.cos(t) / (1 + Math.sin(t)**2)
+            let z = (FigureEight.radius * Math.sin(t) * Math.cos(t)) / (1 + Math.sin(t)**2)
+
+            let y = 10 * (1 - clamp(Math.abs(t - 4.72), 0, 1))
+
+            y = clamp(y, 0, 8)
+
+            return [x, y, z]
+        }
+
+        const step = 1/(n-1) * 2 * Math.PI
+
+        for (let i = 0; i < n; i++) {
+            let t = i * step
+
+            const [x, y, z] = sample(t)
+
+            if (i == 0) {
+                x1 = x
+                y1 = y
+                z1 = z
+                continue
+            }
+
+            const length = Math.hypot(x - x1, z - z1) + 0.2
+            
+            const angle = Math.atan2(x - x1, z - z1)
+            
+            const [x0, y0, z0] = sample(t - step/2)
+            const [x2, y2, z2] = sample(t + step/2)
+
+            const dist = Math.hypot(x2 - x0, z2 - z0)
+            const vertAngle = -Math.atan2(y2 - y0, dist)
+            
+            const segment = new THREE.PlaneGeometry(width, length)
+                .rotateX(vertAngle + Math.PI/2)
+                .rotateY(angle)
+                .translate(x, y, z)
+
+            segments.push(segment)
+
             x1 = x
             y1 = y
             z1 = z
-            continue
         }
 
-        const length = Math.hypot(x - x1, z - z1) + 0.2
+        const geom = BufferGeometryUtils.mergeGeometries(segments)
+
+        console.log('geom', geom.attributes.position.array as Float32Array)
+
+        const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+
+        const figureEight = new THREE.Mesh(geom, material) 
         
-        const angle = Math.atan2(x - x1, z - z1)
+        const finishLineWidth = width
 
-        const vertAngle = -Math.atan2(y - y1, 1)
-        
-        const segment = new THREE.PlaneGeometry(width, length)
-            // .rotateX(degToRad(30))
-            .rotateX(vertAngle + Math.PI/2)
-            .rotateY(angle)
-            .translate(x, y, z)
+        console.log('finish line', FinishLine)
+        const texture = new THREE.TextureLoader().load(FinishLine)
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set( 16, 2 );
+        texture.magFilter = THREE.NearestFilter
+        const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
+        const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
 
-        segments.push(segment)
+        const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
+            .rotateX(Math.PI/2)
+            .rotateZ(Math.PI/4 + Math.PI/2)
 
-        x1 = x
-        y1 = y
-        z1 = z
+        finishLine.position.set(0, 0.01, 0)
+
+        const mesh = new THREE.Mesh()
+
+        mesh.add(figureEight)
+        mesh.add(finishLine)
+
+        this.mesh = mesh
+
+        this.collider = new QuadStripCollider(geom.attributes.position.array as Float32Array)
     }
 
-    const geom = BufferGeometryUtils.mergeGeometries(segments)
+    getMesh(): THREE.Mesh {
+        return this.mesh
+    }
 
-    const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
+    onMesh(position: THREE.Vector3): boolean {
+        return this.collider.onQuadStrip(position)
+    }
 
-    const figureEight = new THREE.Mesh(geom, material) 
-    
-    const finishLineWidth = width
-
-    console.log('finish line', FinishLine)
-    const texture = new THREE.TextureLoader().load(FinishLine)
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set( 16, 2 );
-    texture.magFilter = THREE.NearestFilter
-    const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
-    const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
-
-    const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
-        .rotateX(Math.PI/2)
-        .rotateZ(Math.PI/4 + Math.PI/2)
-
-    finishLine.position.set(0, 0.01, 0)
-
-    const mesh = new THREE.Mesh()
-
-    mesh.add(figureEight)
-    mesh.add(finishLine)
-
-    return mesh
 }
 
-function generateLoopMesh(): THREE.Mesh {
-    const geometry = new THREE.RingGeometry(Loop.innerRadius, Loop.outerRadius, 32);
-    const material = new THREE.MeshBasicMaterial({ color: 0x888888, side: THREE.DoubleSide });
-    
-    const mesh = new THREE.Mesh(geometry, material)
-        .rotateX(Math.PI / 2);
-
-    const finishLineWidth = Loop.outerRadius - Loop.innerRadius
-
-    console.log('finish line', FinishLine)
-    const texture = new THREE.TextureLoader().load(FinishLine)
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set( 16, 2 );
-    texture.magFilter = THREE.NearestFilter
-    const finishLineGeometry = new THREE.PlaneGeometry(finishLineWidth, 0.5)
-    const finishLineMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide  })
-
-    const finishLine = new THREE.Mesh(finishLineGeometry, finishLineMaterial)
-
-    finishLine.position.set(Loop.innerRadius + finishLineWidth/2 - 0.05, 0.0, -0.01)
-
-    mesh.add(finishLine)
-
-    return mesh
-}
-
-const trackMeshGenerators: {
-    [key in TrackType]: () => THREE.Mesh
+const trackMeshes: {
+    [key in TrackType]: TrackMesh
 } = {
-    FigureEight: generateFigureEightMesh,
-    Loop: generateLoopMesh
+    FigureEight: new FigureEightMesh(),
+    Loop: new LoopMesh()
 }
 
 const axesHelper = new THREE.AxesHelper(5);
@@ -656,11 +788,9 @@ scene.add(directionalLight);
         socket.emit('join', existingName, resolve)
     }))
 
-    track = new trackTypeToTrack[trackType]()
+    trackMesh = trackMeshes[trackType]
 
-    const mesh = trackMeshGenerators[trackType]()
-
-    scene.add(mesh)
+    scene.add(trackMesh.getMesh())
 
     console.log('Joined server! My uuid', player.uuid)
     console.log('Other players currently on server:', players)
@@ -803,6 +933,7 @@ scene.add(directionalLight);
 
     document.addEventListener('keydown', event => {
         if (event.code === 'KeyR') restart()
+        if (event.code === 'KeyL') USE_DEBUG_CAMERA = !USE_DEBUG_CAMERA
     })
 
     function loop() {
@@ -818,6 +949,8 @@ scene.add(directionalLight);
             u.update()
         }
 
+        console.log(trackMesh.onMesh(unicycle.getPosition()))
+
         socket.emit('playerMove', unicycle.getPose(), unicycle.getVelocities())
 
         if (USE_DEBUG_CAMERA) {
@@ -825,6 +958,8 @@ scene.add(directionalLight);
         } else {
             cameraController.update()
         }
+
+        controls.enabled = USE_DEBUG_CAMERA
 
         render()
 

@@ -1,4 +1,4 @@
-import { Pose } from "."
+import { Pose, clamp } from "."
 
 type Position = {
     x: number,
@@ -90,6 +90,67 @@ export class Loop extends Track {
 export class FigureEight extends Track {
     static readonly radius = 50
 
+    static readonly geometry = (() => {
+        // const n = 200    
+
+        // const segments = []
+    
+        // let x1, y1, z1
+    
+        // const width = 8
+    
+        // for (let i = 0; i < n; i++) {
+        //     let t = i/(n-1) * 2 * Math.PI
+    
+        //     let x = FigureEight.radius * Math.cos(t) / (1 + Math.sin(t)**2)
+        //     let z = (FigureEight.radius * Math.sin(t) * Math.cos(t)) / (1 + Math.sin(t)**2)
+    
+        //     let y = 10 * (1 - clamp(Math.abs(t - 4.72), 0, 1))
+    
+        //     y = clamp(y, 0, 8)
+    
+        //     if (i == 0) {
+        //         x1 = x
+        //         y1 = y
+        //         z1 = z
+        //         continue
+        //     }
+    
+        //     const length = Math.hypot(x - x1, z - z1) + 0.2
+            
+        //     const angle = Math.atan2(x - x1, z - z1)
+    
+        //     const dist = Math.hypot(x - x1, y - y1, z - z1)
+    
+        //     const vertAngle = -Math.atan2(y - y1, 1.3)
+            
+        //     const heading = [0, Math.cos(vertAngle + Math.PI/2), 0]
+            
+        //     const segment = new THREE.PlaneGeometry(width, length)
+        //         // .rotateX(degToRad(30))
+        //         .rotateX(vertAngle + Math.PI/2)
+        //         .rotateY(angle)
+        //         .translate(x, y, z)
+
+        //     let vertices = segment.getAttribute('position').array
+    
+        //     const s1 = [vertices[0], vertices[1], vertices[2]]
+        //     const s2 = [vertices[3], vertices[4], vertices[5]]
+        //     const s3 = [vertices[6], vertices[7], vertices[8]]
+        //     const s4 = [vertices[9], vertices[10], vertices[11]]
+    
+        //     segments.push([
+        //         s1, s2, s3, s4
+        //     ])
+    
+        //     x1 = x
+        //     y1 = y
+        //     z1 = z
+        // }
+
+        // return segments
+    })()
+
     /*
       ----
      /    \
@@ -103,8 +164,7 @@ export class FigureEight extends Track {
     */
 
     onMap(x: number, y: number, z: number): boolean {
-        const r = Math.hypot(x, z)
-        return r >= Loop.innerRadius && r <= Loop.outerRadius && y <= 1e-6 && y >= -1
+        return true
     }
 
     onFinishLine(x: number, y: number, z: number): boolean {
@@ -132,6 +192,14 @@ export class FigureEight extends Track {
     }
 
     generateStartingPosition(): Pose {
+        return {
+            x: 0,
+            y: 0,
+            z: 0,
+            yaw: 0,
+            roll: 0
+        }        
+
         const r = Math.random() * (Loop.outerRadius - Loop.innerRadius) + Loop.innerRadius
         // const theta = Math.random() * 2 * Math.PI
         const theta = 0

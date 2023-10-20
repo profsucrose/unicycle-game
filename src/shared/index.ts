@@ -12,6 +12,8 @@ export const formatTime = (t: number) => {
     return `${Math.floor(minute)}:${seconds < 10 ? '0' : ''}${seconds.toFixed(1)}`
 }
 
+export const clamp = (x: number, min: number, max: number) => Math.max(min, Math.min(max, x))
+
 export * from './events'
 export * from './tracks'
 
