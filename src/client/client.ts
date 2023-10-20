@@ -8,6 +8,7 @@ import { io, Socket } from 'socket.io-client'
 import { ClientToServerEvents, Player, ServerToClientEvents } from '../shared/events'
 import { FigureEight, InitClient, Leaderboard, Loop, PlayerVelocities, Pose, Track, TrackType, clamp, formatTime, trackTypeToTrack } from '../shared'
 import FinishLine from './finishLine.png'
+import { cond } from 'lodash'
 
 let USE_DEBUG_CAMERA = false
 
@@ -526,6 +527,8 @@ const plane = (() => {
         .rotateX(Math.PI / 2);
 })()
 
+let unicycle: Unicycle
+
 class QuadStripCollider {
     quads: [THREE.Vector3, THREE.Vector3, THREE.Vector3][] = []
 
@@ -533,47 +536,16 @@ class QuadStripCollider {
         for (let i = 0; i < positionAttributes.length; i += 3 * 4) {
             const j = i + 3
             const k = i + 6
-            const l = i + 9
 
-            const xs = [
-                positionAttributes[i],
-                positionAttributes[j],
-                positionAttributes[k],
-                positionAttributes[l],
-            ]
-
-            const ys = [
-                positionAttributes[i + 1],
-                positionAttributes[j + 1],
-                positionAttributes[k + 1],
-                positionAttributes[l + 1],
-            ]
-
-            const zs = [
-                positionAttributes[i + 2],
-                positionAttributes[j + 2],
-                positionAttributes[k + 2],
-                positionAttributes[l + 2],
-            ]
-
-            const minX = Math.min(...xs)
-            const maxX = Math.max(...xs)
-
-            const minY = Math.min(...ys)
-            const maxY = Math.max(...ys)
-
-            const minZ = Math.min(...zs)
-            const maxZ = Math.max(...zs)
-
-            const a = new THREE.Vector3(minX, minY, minZ)
-            const b = new THREE.Vector3(minX, maxY, maxZ)
-            const c = new THREE.Vector3(maxX, minY, minZ)
+            const a = new THREE.Vector3(positionAttributes[i], positionAttributes[i + 1], positionAttributes[i + 2])
+            const b = new THREE.Vector3(positionAttributes[j], positionAttributes[j + 1], positionAttributes[j + 2])
+            const c = new THREE.Vector3(positionAttributes[k], positionAttributes[k + 1], positionAttributes[k + 2])
 
             const u = b.sub(a)
             const v = c.sub(a)
 
-            const a1 = new THREE.ArrowHelper(u, a)
-            const a2 = new THREE.ArrowHelper(v, a)
+            const a1 = new THREE.ArrowHelper(u, a, u.length())
+            const a2 = new THREE.ArrowHelper(v, a, v.length())
 
             const rand255 = () => Math.random()
             const color = new THREE.Color(rand255(), rand255(), rand255())
@@ -588,17 +560,39 @@ class QuadStripCollider {
     }
 
     onQuadStrip(position: THREE.Vector3) {
-        return this.quads.some(([a, u, v]) => QuadStripCollider.onQuad(position, a, u, v))
+        let closestXt = Infinity, closestZt = Infinity
+
+        for (const [a, u, v] of this.quads) {
+            const [on, xt, zt] = QuadStripCollider.onQuad(position, a, u, v)
+            if (on) {
+                const y = xt * u.y + zt * v.y + a.y
+
+                if (position.y > y - 1) {
+                    console.log('Hit!')
+                    console.log('y should be', y)
+                    const pos = unicycle.getPosition()
+                    unicycle.setPosition(new THREE.Vector3(pos.x, y, pos.z))
+                    return true
+
+                }
+            }
+            closestXt = Math.min(xt, closestXt)
+            closestZt = Math.min(zt, closestZt)
+        }
+
+        console.log('xt', closestXt, 'zt', closestZt)
+        return false
+        // return this.quads.some(([a, u, v]) => QuadStripCollider.onQuad(position, a, u, v))
     }
 
-    static onQuad(position: THREE.Vector3, origin: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3): boolean {
+    static onQuad(position: THREE.Vector3, origin: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3): [boolean, number, number] {
         const x = position.x - origin.x
         const z = position.z - origin.z
 
         const a = u.x
         const b = v.x
-        const c = u.y
-        const d = v.y
+        const c = u.z
+        const d = v.z
 
         const det = a*d - b*c
 
@@ -608,8 +602,10 @@ class QuadStripCollider {
         const xt = (d*x - b*z)/det
         const zt = (-c*x + a*z)/det
 
-        return 0 <= xt && xt <= 1
+        const on = 0 <= xt && xt <= 1
             && 0 <= zt && zt <= 1
+
+        return [on, xt, zt]
     }
 }
 
@@ -795,7 +791,7 @@ scene.add(directionalLight);
     console.log('Joined server! My uuid', player.uuid)
     console.log('Other players currently on server:', players)
 
-    let unicycle = new Unicycle(scene, player.pose, player.name)
+    unicycle = new Unicycle(scene, player.pose, player.name)
 
     localStorage.setItem('name', player.name)
 
