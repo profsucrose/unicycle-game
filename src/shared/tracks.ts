@@ -168,27 +168,17 @@ export class FigureEight extends Track {
     }
 
     onFinishLine(x: number, y: number, z: number): boolean {
-        const dz = z - FigureEight.radius
-        const dx = x
-
-        const theta = Math.atan2(dz, dx)
-        return Math.abs(theta) < 5 * Math.PI/180
+        return Math.abs(z) < 5
+            && Math.abs(x) < 2
+            && Math.abs(y) < 2
     }
 
     aheadFinishLine(x: number, y: number, z: number): boolean {
-        const dz = z - FigureEight.radius
-        const dx = x
-
-        const theta = Math.atan2(dz, dx)
-        return Math.abs(theta - -10) < 5 * Math.PI/180
+        return Math.abs(x - 6) < 0.5
     }
 
     behindFinishLine(x: number, y: number, z: number): boolean {
-        const dz = z - FigureEight.radius
-        const dx = x
-
-        const theta = Math.atan2(dz, dx)
-        return Math.abs(theta - 10) < 5 * Math.PI/180
+        return Math.abs(x - (-6)) < 0.5
     }
 
     generateStartingPosition(): Pose {
@@ -196,7 +186,7 @@ export class FigureEight extends Track {
             x: 0,
             y: 0,
             z: 0,
-            yaw: 0,
+            yaw: -Math.PI/4,
             roll: 0
         }        
 

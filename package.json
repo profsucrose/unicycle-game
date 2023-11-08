@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "webpack:watch": "webpack --watch --config ./src/client/webpack.config.js",
-    "webpack:start": "webpack serve --open --config ./src/client/webpack.config.js",
+    "webpack:dev": "webpack serve --open --config ./src/client/webpack.config.js",
     "webpack:build": "webpack --config ./src/client/webpack.config.js",
     "server:build": "tsc -p ./src/server/tsconfig.json",
     "server:dev": "npm run server:build && concurrently -k \"tsc -p ./src/server/tsconfig.json -w\" \"nodemon ./dist/server/server.js\""

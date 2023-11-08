@@ -8,7 +8,9 @@ import { io, Socket } from 'socket.io-client'
 import { ClientToServerEvents, Player, ServerToClientEvents } from '../shared/events'
 import { FigureEight, InitClient, Leaderboard, Loop, PlayerVelocities, Pose, Track, TrackType, clamp, formatTime, trackTypeToTrack } from '../shared'
 import FinishLine from './finishLine.png'
-import { cond } from 'lodash'
+
+const AGENT_FRAME_WIDTH = 20
+const AGENT_FRAME_HEIGHT = 16
 
 let USE_DEBUG_CAMERA = false
 
@@ -16,6 +18,50 @@ const params = new URL(window.location.href).searchParams
 
 const host = params.get('host') ?? 'http://localhost'
 const serverPort = params.get('port') ?? 8082
+const agentHost = params.get('agentHost') ?? null
+const agentPort = params.get('agentPort') ?? null
+
+let useAgent = false
+
+if (agentHost != null || agentPort != null) {
+    if (agentHost == null || agentPort == null) {
+        alert('To use an agent, specify both agentHost and agentPort in the URL.')
+    }
+
+    useAgent = true
+}
+
+const canvas = document.createElement('canvas')
+const threeJsCanvas = document.createElement('canvas')
+const agentViewCanvas = document.createElement('canvas')
+
+const screenWidth = window.innerWidth
+const screenHeight = window.innerHeight
+
+canvas.width = screenWidth
+canvas.height = screenHeight
+
+document.body.appendChild(canvas)
+
+if (useAgent) {
+    // If using agent, rescale aspect ratio to what agent expects
+    canvas.height = AGENT_FRAME_HEIGHT/AGENT_FRAME_WIDTH * canvas.width
+
+    agentViewCanvas.width = AGENT_FRAME_WIDTH
+    agentViewCanvas.height = AGENT_FRAME_HEIGHT
+
+    agentViewCanvas.id = 'agent-canvas'
+
+    Object.assign(agentViewCanvas.style, {
+        position: 'absolute',
+        width: `${AGENT_FRAME_WIDTH * 5}px`,
+        height: `${AGENT_FRAME_WIDTH * 5}px`,
+        right: '10px',
+        top: '100px',
+    })
+
+    document.body.appendChild(agentViewCanvas)
+}
 
 const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(`${host}:${serverPort}`);
 
@@ -105,7 +151,6 @@ Object.assign(chatInput.style, {
 })
 document.body.appendChild(chatInput)
 
-
 function log(line: string) {
     logs.innerText += '\n' + line
     logs.scroll(0, logs.scrollHeight + 100)
@@ -132,12 +177,17 @@ document.addEventListener('keyup', (event) => {
 
 let trackMesh: TrackMesh
 
+// Generalize controls for player/agent
+type UnicycleInput = {
+    leaning: -1 | 0 | 1,
+    pedaling: -2 | -1 | 0 | 1 | 2,
+}
+
 class Unicycle {
     localMesh: THREE.Mesh
     worldMesh: THREE.Mesh
 
     localRiderMesh: THREE.Mesh
-    localRiderOffsetY = 0.6
 
     // Use extremey simplified, hacky physics approximation
     dPitchMomentum: number = 0
@@ -176,6 +226,8 @@ class Unicycle {
 
     leanSpeedDeg = 200
 
+    riderTheta = 0
+
     updateName(newName: string) {
         this.name = newName
         if (this.nameBillboard) {
@@ -201,6 +253,8 @@ class Unicycle {
     getHeading(): THREE.Vector3 {
         return new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI / 2), 0, Math.cos(this.worldMeshYaw + Math.PI / 2))
     }
+
+    static readonly wheelHeight = 2.2;
 
     generateWheelMesh() {
         const wheelGeometry = (() => {
@@ -250,9 +304,14 @@ class Unicycle {
         return mesh
     }
 
+    static readonly riderRadius = 0.1
+    static readonly riderHeight = 2
+    static readonly localRiderOffsetY = 0.6
+
     generateRiderMesh(wheelMesh: THREE.Mesh) {
-        const riderRadius = 0.1
-        const riderHeight = 2
+        const riderRadius = Unicycle.riderRadius
+        const riderHeight = Unicycle.riderHeight
+        const localRiderOffsetY = Unicycle.localRiderOffsetY
         const geometry = new THREE.CylinderGeometry(riderRadius, riderRadius, riderHeight)
         const material = new THREE.MeshBasicMaterial({
             color: 0xff0000
@@ -261,11 +320,14 @@ class Unicycle {
         wheelMesh.geometry.computeBoundingBox()
         wheelMesh.geometry.boundingBox.getSize(size)
         const mesh = new THREE.Mesh(geometry, material)
-            .translateY(size.y + riderHeight / 2 + this.localRiderOffsetY)
+            .translateY(size.y + riderHeight / 2 + localRiderOffsetY)
         return mesh
     }
 
     rotateRider(theta: number) {
+        this.riderTheta += theta
+
+        /*
         const oldPosition = this.localRiderMesh.position.clone()
 
         this.localRiderMesh.geometry.computeBoundingBox()
@@ -276,27 +338,20 @@ class Unicycle {
 
         this.riderRoll += theta
         this.localRiderMesh.rotateX(theta)
-        const dx = Math.sin(theta) * size.y/2
+        const dx = Math.sin(theta) * 2/2
+
         this.localRiderMesh.translateZ(dx)
 
         // this.localRiderMesh.position.set(oldPosition.x, oldPosition.y, oldPosition.z + dx)
+        */
     }
 
-    handleInput() {
-        if (keysHeld.KeyW) this.dPitchMomentum -= this.maxOmegaRadiansPerSecond * tickDelta
-        if (keysHeld.KeyS) this.dPitchMomentum += this.maxOmegaRadiansPerSecond * tickDelta
+    handleInput(input: UnicycleInput) {
+        this.dPitchMomentum -= input.pedaling * this.maxOmegaRadiansPerSecond * tickDelta
 
-        if (keysHeld.KeyD || keysHeld.KeyA) {
-            const leanSpeedDeg = 200
-            const theta = degToRad((keysHeld.KeyD ? leanSpeedDeg : 0) + (keysHeld.KeyA ? -leanSpeedDeg : 0)) * tickDelta
-            this.rotateRider(theta)
-        }
-
-        if (keysHeld.ShiftLeft) {
-            this.maxOmegaRadiansPerSecond = 6
-        } else {
-            this.maxOmegaRadiansPerSecond = 3
-        }
+        const leanSpeedDeg = 200
+        const theta = degToRad(input.leaning * leanSpeedDeg) * tickDelta
+        this.rotateRider(theta)
     }    
 
     getVelocities(): PlayerVelocities {
@@ -344,7 +399,7 @@ class Unicycle {
         this.localMesh.geometry.computeBoundingBox()
         this.localMesh.geometry.boundingBox.getSize(wheelMeshSize)
         const rX = (Math.sin(this.worldMeshRoll) * wheelMeshSize.y
-            + Math.sin(this.localRiderMesh.rotation.x) * (riderSize.y / 2 + this.localRiderOffsetY))
+            + Math.sin(this.localRiderMesh.rotation.x) * (riderSize.y / 2 + Unicycle.localRiderOffsetY))
         let torque = rX * gravity * wheelMass
 
         this.worldMeshRollMomentum += torque / wheelInertia * tickDelta
@@ -367,8 +422,8 @@ class Unicycle {
         // k = 10
 
         this.heading = new THREE.Vector3(Math.sin(this.worldMeshYaw + Math.PI / 2), 0, Math.cos(this.worldMeshYaw + Math.PI / 2))
-        this.arrowHelper.position.set(this.worldMesh.position.x, 0, this.worldMesh.position.z)
-        this.arrowHelper.setDirection(this.heading)
+        // this.arrowHelper.position.set(this.worldMesh.position.x, 0, this.worldMesh.position.z)
+        // this.arrowHelper.setDirection(this.heading)
 
         const speed = -this.dPitchMomentum
 
@@ -383,11 +438,11 @@ class Unicycle {
 
         this.worldMesh.position.y += this.yVelocity * tickDelta
 
-        if (false) { // !trackMesh.onMesh(this.worldMesh.position)) {
+        if (!trackMesh.onMesh(this.worldMesh.position)) {
             this.yVelocity -= gravity * tickDelta
         } else {
             this.yVelocity = 0
-            this.worldMesh.position.y = 0
+            // this.worldMesh.position.y = 0
         }
 
         this.localMesh.setRotationFromEuler(new THREE.Euler(this.roll, this.yaw, this.pitch))
@@ -399,6 +454,14 @@ class Unicycle {
         const fNum = (n: number) => n.toFixed(2).padStart(5, ' ')
 
         positionText.innerText = `Position: ${fNum(this.worldMesh.position.x)}, ${fNum(this.worldMesh.position.y)}, ${fNum(this.worldMesh.position.z)}`
+    
+        // Rotate rider mesh about "seat" axis (originally there was a bug when
+        // rotating iteratively, so reset explicitly every tick)
+        // Definitely a cleaner way of doing this
+        this.localRiderMesh.rotation.x = this.riderTheta
+        this.localRiderMesh.position.y = Unicycle.wheelHeight + Unicycle.localRiderOffsetY;
+        this.localRiderMesh.position.y -= Unicycle.riderHeight/2 - (Math.cos(this.riderTheta) * Unicycle.riderHeight/2);
+        this.localRiderMesh.position.z = Math.sin(this.riderTheta) * Unicycle.riderHeight/2;
     }
 
     updateBillboard() {
@@ -419,18 +482,18 @@ class Unicycle {
         this.worldMesh.add(this.localMesh)
         this.worldMesh.add(this.localRiderMesh)
 
-        this.arrowHelper = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
-        scene.add(this.arrowHelper);
+        // this.arrowHelper = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
+        // scene.add(this.arrowHelper);
 
-        this.centerArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
-        scene.add(this.centerArrow);
+        // this.centerArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
+        // scene.add(this.centerArrow);
 
-        this.centerArrow.setColor(THREE.Color.NAMES.red)
+        // this.centerArrow.setColor(THREE.Color.NAMES.red)
 
-        this.normalArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
-        scene.add(this.normalArrow);
+        // this.normalArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, 0), 1)
+        // scene.add(this.normalArrow);
 
-        this.normalArrow.setColor(THREE.Color.NAMES.blue)
+        // this.normalArrow.setColor(THREE.Color.NAMES.blue)
 
         // const geometry = new THREE.RingGeometry(0, 1)
         // const material = new THREE.MeshBasicMaterial( { color: 0xffff00, side: THREE.DoubleSide } );
@@ -465,14 +528,14 @@ class Unicycle {
         const material = new THREE.MeshBasicMaterial({ map: texture });
         const nameBillboard = new THREE.Mesh(geometry, material)
 
-        scene.add(nameBillboard)
+        // scene.add(nameBillboard)
         this.nameBillboard = nameBillboard
     }
 
     destroy() {
         // Should also dispose materials? But not sure how
 
-        this.scene.remove(this.arrowHelper)
+        // this.scene.remove(this.arrowHelper)
 
         this.scene.remove(this.nameBillboard)
 
@@ -513,9 +576,13 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 camera.position.set(-3, 3, 3)
 camera.lookAt(10, 10, 10)
 
-const renderer = new THREE.WebGLRenderer()
+threeJsCanvas.width = canvas.width
+threeJsCanvas.height = canvas.height
 
-renderer.setSize(window.innerWidth, window.innerHeight)
+const renderer = new THREE.WebGLRenderer({ canvas: threeJsCanvas })
+
+renderer.setSize(threeJsCanvas.width, threeJsCanvas.height)
+
 document.body.appendChild(renderer.domElement)
 
 const controls = new OrbitControls(camera, renderer.domElement)
@@ -544,45 +611,55 @@ class QuadStripCollider {
             const u = b.sub(a)
             const v = c.sub(a)
 
-            const a1 = new THREE.ArrowHelper(u, a, u.length())
-            const a2 = new THREE.ArrowHelper(v, a, v.length())
+            // const a1 = new THREE.ArrowHelper(u, a, u.length())
+            // const a2 = new THREE.ArrowHelper(v, a, v.length())
 
-            const rand255 = () => Math.random()
-            const color = new THREE.Color(rand255(), rand255(), rand255())
-            a1.setColor(color)
-            a2.setColor(color)
+            // const rand255 = () => Math.random()
+            // const color = new THREE.Color(rand255(), rand255(), rand255())
+            // a1.setColor(color)
+            // a2.setColor(color)
 
-            scene.add(a1)
-            scene.add(a2)
+            // scene.add(a1)
+            // scene.add(a2)
 
             this.quads.push([a, u, v])
         }
     }
 
     onQuadStrip(position: THREE.Vector3) {
-        let closestXt = Infinity, closestZt = Infinity
+        let closestHitQuad: {
+            a: THREE.Vector3,
+            u: THREE.Vector3,
+            v: THREE.Vector3,
+            y: number,
+            yDist: number
+        } = null
 
         for (const [a, u, v] of this.quads) {
             const [on, xt, zt] = QuadStripCollider.onQuad(position, a, u, v)
             if (on) {
                 const y = xt * u.y + zt * v.y + a.y
 
-                if (position.y > y - 1) {
-                    console.log('Hit!')
-                    console.log('y should be', y)
-                    const pos = unicycle.getPosition()
-                    unicycle.setPosition(new THREE.Vector3(pos.x, y, pos.z))
-                    return true
+                const yDist = Math.abs(position.y - y)
 
-                }
+                if (closestHitQuad == null
+                    || yDist < closestHitQuad.yDist) {
+                        closestHitQuad = {
+                            a, u, v, y, yDist
+                        }
+                    }
             }
-            closestXt = Math.min(xt, closestXt)
-            closestZt = Math.min(zt, closestZt)
         }
 
-        console.log('xt', closestXt, 'zt', closestZt)
+        if (closestHitQuad != null
+                && closestHitQuad.yDist < 0.5) {
+            console.log('Hit!')
+            console.log('y should be', closestHitQuad.y.toFixed(2), 'currently is', position.y.toFixed(2))
+            unicycle.setPosition(new THREE.Vector3(position.x, closestHitQuad.y, position.z))
+            return true
+        }
+
         return false
-        // return this.quads.some(([a, u, v]) => QuadStripCollider.onQuad(position, a, u, v))
     }
 
     static onQuad(position: THREE.Vector3, origin: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3): [boolean, number, number] {
@@ -759,6 +836,42 @@ class FigureEightMesh extends TrackMesh {
 
 }
 
+const agentViewCanvasCtx = agentViewCanvas.getContext('2d')
+
+class Agent {
+    ws: WebSocket
+
+    currentInput: UnicycleInput
+    buffer = new Uint8ClampedArray(AGENT_FRAME_WIDTH * AGENT_FRAME_HEIGHT * 4)
+
+    constructor(host: string, port: string) {
+        this.ws = new WebSocket(`ws://${host}:${port}`)
+    }
+
+    update() {
+        let index = 0 
+
+        const pixel = new Uint8ClampedArray(4)
+
+        for (let x = 0; x < AGENT_FRAME_WIDTH; x++) {
+            for (let y = 0; y < AGENT_FRAME_HEIGHT; y++) {
+                const sx = Math.floor(screenWidth/AGENT_FRAME_WIDTH * (x + 0.5))
+                const sy = Math.floor(screenHeight/AGENT_FRAME_HEIGHT * (y + 0.5))
+                const intensity = Math.hypot(pixel[0]/255, pixel[1]/255, pixel[2]/255)
+                const grayscale = intensity > 0.5 ? 1 : 0
+                this.buffer[index] = grayscale
+                this.buffer[index + 1] = grayscale
+                this.buffer[index + 2] = grayscale
+                this.buffer[index + 3] = 255
+                index += 4
+            }
+        }
+
+
+        agentViewCanvasCtx.putImageData(new ImageData(this.buffer, AGENT_FRAME_WIDTH, AGENT_FRAME_HEIGHT), 0, 0)
+    }
+}
+
 const trackMeshes: {
     [key in TrackType]: TrackMesh
 } = {
@@ -766,11 +879,15 @@ const trackMeshes: {
     Loop: new LoopMesh()
 }
 
-const axesHelper = new THREE.AxesHelper(5);
-scene.add(axesHelper);
+// const axesHelper = new THREE.AxesHelper(5);
+// scene.add(axesHelper);
 
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
 scene.add(directionalLight);
+
+let agent: Agent
+
+if (useAgent) agent = new Agent(agentHost, agentPort)
 
 ; (async () => {
     const existingName = localStorage.getItem('name')    
@@ -938,14 +1055,27 @@ scene.add(directionalLight);
         // mesh.rotation.x += 0.01
         // mesh.rotation.y += 0.01
 
-        if (gameFocused)
-            unicycle.handleInput()
+        if (!useAgent) {
+            if (gameFocused) {
+                // Take controls from player
+                const leaning = Number(keysHeld.KeyD) - Number(keysHeld.KeyA) as 1 | 0 | -1
+                const pedaling = ((Number(keysHeld.ShiftLeft) + 1) * (Number(keysHeld.KeyW) - Number(keysHeld.KeyS))) as -2 | -1 | 0 | 1 | 2
+                const input: UnicycleInput = {
+                    leaning,
+                    pedaling
+                }
+                unicycle.handleInput(input)
+            }
+        } else {
+            agent.update()
+            // const input = agent.currentInput
+            // unicycle.handleInput(input)
+        }
 
         for (const u of Object.values(playerUnicycles)) {
             u.update()
         }
 
-        console.log(trackMesh.onMesh(unicycle.getPosition()))
 
         socket.emit('playerMove', unicycle.getPose(), unicycle.getVelocities())
 
