@@ -9,8 +9,8 @@ const app = express();
 const server = createServer(app);
 
 const io = new Server<
-  ClientToServerEvents,
-  ServerToClientEvents
+    ClientToServerEvents,
+    ServerToClientEvents
 >(server, {
     cors: {
         origin: "*",
@@ -18,23 +18,23 @@ const io = new Server<
     }
 })
 
-const port = 8082
+const port = process.env.SERVER_PORT ?? 8082
 
 let trackType: TrackType = 'FigureEight'
-const track: Track = new trackTypeToTrack[trackType]()
+let track: Track = new trackTypeToTrack[trackType]()
 
 interface PlayerEntry extends Player {
     progress: 0 | 1 | 2,
     lapTime: number
 }
 
-const players: {[uuid: string]: PlayerEntry} = {} 
+const players: { [uuid: string]: PlayerEntry } = {}
 
 const leaderboard: Leaderboard = []
 
 setInterval(() => {
     for (const player of Object.values(players)) {
-        player.lapTime += 10/1000
+        player.lapTime += 10 / 1000
     }
 }, 10)
 
@@ -65,13 +65,25 @@ io.on('connection', socket => {
         console.log('sending players', players)
 
         cb({
-            player, 
+            player,
             players: Object.values(players),
             leaderboard,
             trackType
         })
 
         players[uuid] = player
+
+        // Send welcome message
+        {
+            [
+                'Welcome!',
+                'Your goal is to loop around the track',
+                'with only your trusty unicycle.',
+                'Use W/S to pedal, A/D to lean, R to reset.',
+                'Good luck!',
+                ''
+            ].forEach(msg => socket.emit('chat', msg))
+        }
 
         const joinMessage = `${player.name} joined!`
 
@@ -90,9 +102,9 @@ io.on('connection', socket => {
             const behind = track.behindFinishLine(pose.x, pose.y, pose.z)
             const finished = track.onFinishLine(pose.x, pose.y, pose.z)
             const progress = player.progress
-            
+
             let finishedLap = false
-            
+
             if (ahead && progress == 0) player.progress = 1
             if (behind && progress == 1) player.progress = 2
             if (finished) {
@@ -138,11 +150,22 @@ io.on('connection', socket => {
 
         console.log('New server version')
 
+        socket.on('setTrack', newTrackType => {
+            if (newTrackType == trackType) return
+
+            trackType = newTrackType
+            track = new trackTypeToTrack[trackType]()
+
+            io.emit('changeTrack', trackType, Object.values(players).map(p => [p.uuid, track.generateStartingPosition()]))
+
+            io.emit('chat', `${name} changed the track to '${trackType}'!`)
+        })
+
         socket.on('setName', (newName, ack) => {
             console.log('player changing name to', newName)
             name = newName
             player.name = newName
-            
+
             io.emit('playerChangeName', uuid, name)
 
             ack()
@@ -172,7 +195,7 @@ io.on('connection', socket => {
 
             const sockets = await io.fetchSockets()
 
-            for (const s of sockets) 
+            for (const s of sockets)
                 s.emit('playerLeave', uuid)
         })
     })

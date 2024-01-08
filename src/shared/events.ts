@@ -35,6 +35,7 @@ export interface ServerToClientEvents {
     playerChangeName: (uuid: string, name: string) => void
     chat: (text: string) => void
     updateLeaderboard: (leaderboard: Leaderboard) => void
+    changeTrack: (trackType: TrackType, poseResets: [string, Pose][]) => void
 }
 
 export interface ClientToServerEvents {
@@ -43,4 +44,5 @@ export interface ClientToServerEvents {
     restart: (cb: ((newPose: Pose) => void)) => void
     playerMove: (newPose: Pose, velocities: PlayerVelocities) => void
     setName: (name: string, ack: () => void) => void
+    setTrack: (track: TrackType, ack: () => void) => void
 }
