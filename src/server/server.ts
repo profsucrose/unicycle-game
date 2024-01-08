@@ -81,6 +81,10 @@ io.on('connection', socket => {
                 'with only your trusty unicycle.',
                 'Use W/S to pedal, A/D to lean, R to reset.',
                 'Good luck!',
+                '',
+                '/name <new name> to change your name.',
+                '/track Loop or /track FigureEight',
+                'to set the track.',
                 ''
             ].forEach(msg => socket.emit('chat', msg))
         }
@@ -114,8 +118,6 @@ io.on('connection', socket => {
                 // Otherwise, must have reversed back. So reset to 0
                 else player.progress = 0
             }
-
-            console.log('player progress', progress)
 
             if (finishedLap) {
                 const formattedTime = formatTime(player.lapTime)
